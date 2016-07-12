@@ -1,0 +1,735 @@
+Mesh Installation and Configuration
+===================================
+
+It is strongly recommended that this entire document be read before
+beginning installation.  Because portions of Mesh operate within the SSH
+daemon of a host, which is typically its only access point besides its
+console, a Mesh installation can cut off access to that host if not
+performed correctly.  Initially, it is suggested that Mesh be installed
+using secondary SSH daemons until its functionality can be verified.
+See the deployments section for details.
+
+
+1. Deployments
+
+    Before installation, the type of deployment must be chosen.
+    Deployments are based on the three major capabilities of single
+    sign-on, proxying (with fine-grained authorizations), and host-level
+    authorizations.  These capabilities roughly correspond to the Mesh
+    Authentication Point (MAP), the Mesh Proxy (MP), and the Mesh
+    Interposition Agent (MIA), respectively.  For a full understanding
+    of these components, see https://pkolano.github.io/papers/sacmat07.pdf
+
+    Single sign-on allows the same user credentials to be used for
+    authentication both within and, if desired, across organizational
+    units.  Proxying protects internal resources from direct attack by
+    using a secure bastion host that vets all commands before they reach
+    the target.  Host-level authorizations protect internal resources
+    at the system call level against either a compromise of the proxy or
+    malicious user behavior.  Mesh can be deployed to support any
+    combination of these capabilities.
+
+    Each deployment option is briefly described below.
+    
+    1.1. Single sign-on, proxying, and authorizations (standard deployment)
+
+        This deployment utilizes an MP host to proxy all requests to
+        resources, a MAP host to provide public keys to resources and
+        other MAPs, and a set of resource hosts on which remote commands
+        may execute.  This deployment requires an MP install, a MAP
+        install, and one or more resource installs.
+
+    1.2. Single sign-on and proxying (no authorizations)
+
+        This deployment is identical to the standard deployment except
+        commands are not restricted in any way once they reach resources.
+        Commands are still vetted by the MP.  This deployment requires
+        an MP install, a MAP install, and one or more resource installs.
+
+    1.3. Proxying and authorizations (no single sign-on)
+
+        In this deployment, commands are vetted by the MP before they
+        reach resources and by the MIA on the resource itself, but no
+        Mesh authentication mechanisms are utilized.  This deployment
+        requires an MP install and one or more resource installs.
+
+    1.4. Single sign-on and authorizations (no proxying)
+
+        In this deployment, resources may be accessed directly from the
+        network, with the MIA/MAP used to provide a simple single
+        sign-on environment for SSH as well as low-level authorizations
+        on resources.  This deployment requires a MAP install and one
+        or more resource installs.
+
+    1.5. Single sign-on (no proxying or authorizations)
+
+        In this deployment, resources may be accessed directly from the
+        network, with the MIA/MAP used to provide a simple single
+        sign-on environment for SSH.  Successfully authenticated
+        commands execute without restriction on resources.  This
+        deployment requires a MAP install and one or more resource
+        installs.
+
+    1.6. Authorizations (no single sign-on or proxying)
+
+        Low-level authorizations may be used on any host independent of
+        an MP or MAP.  These authorizations enforce restrictions on
+        what files may be executed and written.  This deployment
+        requires one or more resource installs.
+
+    1.7. Proxying/Mash (no single sign-on or authorizations)
+
+        A proxying-only deployment is equivalent to a Mesh Authorization
+        Shell (Mash) deployment.  Mash is a highly restrictive and
+        customizable login shell that supports fine-grained
+        authorizations of commands.  It may be used on any host
+        independent of the MP or MAP to provide a restricted execution
+        environment.  For example, it can be used as a more flexible
+        alternative to scponly (http://sublimation.org/scponly) or rssh
+        (http://www.pizzashack.org/rssh).  This deployment requires one
+        or more MP installs.
+
+    1.8. Combined MP/MAP
+
+        With a corresponding decrease in security, the MP and MAP
+        functionality may be combined on a single host.  See the
+        discussion in https://pkolano.github.io/papers/sacmat07.pdf
+        for details.  This deployment requires an MP install and one or
+        more resource installs.
+
+    1.9. Multiple SSH daemons per host
+
+        On any of the MP, the MAP, or resources, the MIA may run within
+        the primary SSH daemon on port 22 or within a second dedicated
+        SSH daemon on an alternate port.  This decision should be made
+        before any SSH daemon configuration is altered.  Those not
+        familiar with Mesh may initially wish to use secondary daemons
+        until its functionality can be verified.  The initial
+        configuration of these secondary daemons is outside the scope of
+        this document.  See "man sshd" and/or "man sshd_config" for
+        details.
+
+
+2. Prerequisites
+
+    Prerequisites differ depending on the type of install (mp, map, or
+    resource) and whether single sign-on is enabled (the default).
+    Where noted, software is only required during the compilation and/or
+    installation phases and not during operation.
+
+    2.1. MP prerequisites
+
+        2.1.1. Single sign-on enabled
+
+            o Bison    (compilation only)
+            o C++      (compilation only)
+            o Flex     (compilation only)
+            o GNU Make (compilation/installation only)
+            o OpenSSH
+            o Perl >= 5.6 and non-standard modules:
+                o Date::Parse
+                o Net::Netmask
+                o Text::Table
+                o Tie::IxHash
+                o XML::Simple
+
+        2.1.2. Single sign-on disabled
+
+            o GNU Make (installation only)
+            o OpenSSH
+            o Perl >= 5.6 and non-standard modules:
+                o Date::Parse
+                o Net::Netmask
+                o Text::Table
+                o Tie::IxHash
+                o XML::Simple
+
+    2.2. MAP prerequisites
+
+        o Bison    (compilation only)
+        o C++      (compilation only)
+        o Flex     (compilation only)
+        o GNU Make (compilation/installation only)
+        o OpenSSH
+        o Perl >= 5.6 and non-standard modules:
+            o Date::Parse
+            o Net::Netmask
+            o Text::Table
+            o Tie::IxHash
+            o XML::Simple
+
+    2.2. Resource prerequisites
+
+        o Bison    (compilation only)
+        o C++      (compilation only)
+        o Flex     (compilation only)
+        o GNU Make (compilation/installation only)
+        o OpenSSH
+        o Perl >= 5.0 and non-standard modules:
+            o File::BSDGlob (for older Perl 5.0x versions where
+                             File::Glob does not exist)
+
+
+3. Installation
+
+    Installation uses the standard "configure; make; make install"
+    process.  The configure command specifies various parameters that
+    impact installation behavior.  The type of install is specified
+    using the "--type" parameter with a value of "mp", "map", or
+    "resource".  The installation prefix is specified using the
+    "--prefix" parameter with the base directory path.  Single sign-on
+    is enabled by default, but may be explicitly disabled using the
+    "--disable-sso" option.  MP and MAP installs also may be given a
+    "--group" parameter with the name of the designated Mesh group.
+    Run "configure --help" for all options and defaults.
+
+    3.1. MP installation
+
+        3.1.1. Single sign-on enabled
+
+            The following example command line would configure a
+            standard MP install with an installation prefix of "/" and
+            a Mesh group of "mesh":
+
+                configure        \
+                    --type=mp    \
+                    --prefix=/   \
+                    --group=mesh
+
+            Note that only the "--type" option is required as the other
+            options have default values.
+
+            The software is built using:
+
+                make
+
+            Note that configure and make do not have to be run on the
+            final installation target.  For example, if a compiler is
+            not installed on the actual MP host, configure and make can
+            be run on another host.  Afterwards, the distribution
+            directory can be copied to the actual MP, where the
+            installation may then continue.  Mesh is installed using:
+
+                make install
+
+            Note that this step requires root privileges.  Also,
+            before this step, the group specified in the "--group"
+            configure option must be manually created, if it does not
+            already exist.
+
+        3.1.2. Single sign-on disabled
+
+            The following example command line would configure an MP
+            install with single sign-on disabled and an installation
+            prefix of "/":
+
+                configure         \
+                    --type=mp     \
+                    --prefix=/    \
+                    --disable-sso
+
+            The make step is not necessary in this case as the code is
+            pure Perl.  Mesh is installed using:
+
+                make install
+
+            Note that this step requires root privileges.
+
+    3.2. MAP installation
+
+        The following example command line would configure a MAP install
+        with an installation prefix of "/" and a Mesh group of "mesh":
+
+            configure        \
+                --type=map   \
+                --prefix=/   \
+                --group=mesh
+
+        Note that only the "--type" option is required as the other
+        options have default values.
+
+        The software is built using:
+
+            make
+
+        Note that configure and make do not have to be run on the final
+        installation target.  For example, if a compiler is not
+        installed on the actual MAP host, configure and make can be run
+        on another host.  Afterwards, the distribution directory can be
+        copied to the actual MAP, where the installation may then
+        continue.  Mesh is installed using:
+
+            make install
+
+        Note that this step requires root privileges.  Also, before
+        this step, the group specified in the "--group" configure option
+        must be manually created, if it does not already exist.
+
+    3.3. Resource installation
+
+        3.3.1. Single sign-on enabled
+
+            The following example command line would configure a
+            standard resource install with an installation prefix of "/".
+
+                configure           \
+                    --type=resource \
+                    --prefix=/
+
+            Note that only the "--type" option is required as the
+            other options have default values.
+
+            The software is built using:
+
+                make
+
+            Note that configure and make do not have to be run on the
+            final installation target.  For example, if a compiler is
+            not installed on the actual resource, configure and make can
+            be run on another host.  Afterwards, the distribution
+            directory can be copied to the final target, where the
+            installation may then continue.  Mesh is installed using:
+
+                make install
+
+            Note that this step requires root privileges.
+
+        3.3.2. Single sign-on disabled
+
+            The following example command line would configure a
+            resource install with single sign-on disabled and an
+            installation prefix of "/".
+
+                configure           \
+                    --type=resource \
+                    --prefix=/      \
+                    --disable-sso
+
+            The software is built using:
+
+                make
+
+            Note that configure and make do not have to be run on the
+            final installation target.  For example, if a compiler is
+            not installed on the actual resource, configure and make can
+            be run on another host.  Afterwards, the distribution
+            directory can be copied to the final target, where the
+            installation may then continue.  Mesh is installed using:
+
+                make install
+
+            Note that this step requires root privileges.
+
+
+4. Configuration
+
+    Note in all cases, $PREFIX refers to the prefix directory given to
+    configure in the installation phase (or "/usr/local" if the
+    "--prefix" option was not specified).
+
+    4.1. MP configuration
+
+        4.1.1. /etc/mesh/mesh.conf
+
+            A skeleton for this file is auto-generated during
+            installation, which contains name-value pairs describing
+            basic properties of Mesh.  Any items listed under the MP
+            sections in the auto-generated config file should be
+            reviewed.  Any uncommented items in these sections must be
+            configured (uncommented items in other sections can be
+            ignored or commented out if they are not being used by
+            another Mesh component).  For the MP, these include:
+
+                map_host
+                map_print
+                mp_host
+                mp_print
+                self_host
+
+        4.1.2. /etc/mesh/mashrc
+
+            A skeleton for this file is auto-generated during
+            installation, which contains an XML description of
+            authorized commands and restrictions on those commands
+            enforced by Mash.  See "doc/mashrc.txt" for details of Mash
+            configuration.
+
+            Note that no further configuration is needed beyond this
+            point when single sign-on is disabled.
+
+        4.1.3. /etc/mesh/mapkeys
+
+            This directory contains SSH private keys for the MPs of
+            foreign VOs (see https://pkolano.github.io/papers/sacmat07.pdf).
+            These keys are used to retrieve public keys from foreign
+            MPs and to map user names between VOs.  Keys must be named
+            to include the user, the host, and the port on that host.
+            For example, the following:
+
+                mpuser@mp.example.com:1234
+
+            should contain a private key to access user "mpuser" on host
+            "mp.example.com" where the SSH daemon on that host is
+            operating on port 1234.
+
+            Note that the mapkeys directory on the MP should contain
+            keys for foreign MPs while the mapkeys directory on the
+            MAP should contain keys for foreign MAPs.
+
+        4.1.4. /etc/passwd (or equivalent)
+
+            This file contains user account entries.  All normal users
+            (i.e. excluding system accounts such as "root", "nobody",
+            etc.) should have their login shell set to $PREFIX/bin/mash.
+            Administrative users with Mash as their login shell must
+            be explicitly allowed to run a different shell in
+            /etc/mesh/mashrc.  See "doc/mashrc.txt" for details of Mash
+            configuration and "etc/mashrc.mp" for examples of
+            administrative setup.
+
+            An account must exist on the MP corresponding to the value
+            of "mesh_user" in mesh.conf that is in the Mesh group
+            originally specified by the configure "--group" option.
+            Similarly, any accounts used by foreign MPs to retreive
+            public keys must also be configured in this file and be
+            members of the Mesh group.  The login shell of all such
+            accounts must be $PREFIX/bin/mash.
+
+        4.1.5. /etc/init.d/sshd (or equivalent)
+
+            This file contains commands for invoking the SSH daemon.
+            For Linux/BSD, the environment in which the SSH daemon
+            executes must contain the settings:
+
+                LD_PRELOAD=$PREFIX/lib/mesh_agent.so
+                MESH_LOCK=0
+
+            For IRIX, the LD_PRELOAD setting must be changed to:
+
+                _RLD_LIST=$PREFIX/lib/mesh_agent.so:DEFAULT:libgen.so:libC.so.2
+
+            These settings can be achieved by adding an appropriate
+            "env" command.  For example, on a Debian system, the
+            following:
+
+                start-stop-daemon --start --quiet --pidfile /var/run/sshd.pid \
+                    --exec /usr/sbin/sshd --startas /usr/bin/env --           \
+                    LD_PRELOAD=$PREFIX/lib/mesh_agent.so MESH_LOCK=0          \
+                    /usr/sbin/sshd $SSHD_OPTS
+
+            invokes the SSH daemon with the required environment
+            settings.
+
+        4.1.6. /etc/ssh/sshd_config (or equivalent)
+
+            This file contains SSH daemon configuration.  The only
+            required setting is:
+
+                PubkeyAuthentication yes
+
+            Note that this is the default setting in OpenSSH.
+
+        4.1.7. /etc/ssh/ssh_known_hosts (or equivalent)
+
+            This file contains SSH public keys for known hosts.  This
+            file should include a public key for the local MAP as well
+            as public keys for all foreign MPs for which there is a
+            private key in /etc/mesh/mapkeys.  This file can be
+            populated using the "ssh-keyscan" command.  For example,
+            the following:
+
+                ssh-keyscan -t rsa -p 1234 map.example.com \
+                    >>/etc/ssh/ssh_known_hosts
+
+            can be used to retrieve the public RSA key of host
+            "map.example.com" on port 1234 and append it to
+            /etc/ssh/ssh_known_hosts.
+
+        4.1.8. /var/spool/cron/crontabs/root (or equivalent)
+
+            A root crontab may optionally be defined to collect stats
+            on a periodic basis.  The $PREFIX/sbin/mesh-logstats command
+            takes a syslog stream on stdin and produces a set of result
+            tables on stdout.
+
+            # Collect daily Mesh usage stats at 8am and save in /dir
+            #   (assumes syslog of previous day in /var/log/syslog.0)
+            0 8 * * * $PREFIX/sbin/mesh-logstats </var/log/syslog.0 \
+                >/dir/mesh.`/bin/date +%m.%d.%y`
+
+        4.1.9. $PREFIX/var/meshkeys/$USER
+
+            Any private keys distributed to foreign MPs for public key
+            retrieval must have the corresponding public key stored on
+            the local MP in meshkeys directory under the user
+            corresponding to the account for which the private key is
+            valid.  This key must be owned by the same user and have
+            permissions 644 (i.e. read and write by owner and read by
+            group/others).
+
+    4.2. MAP configuration
+
+        4.2.1. /etc/mesh/mesh.conf
+
+            A skeleton for this file is auto-generated during
+            installation, which contains name-value pairs describing
+            basic properties of Mesh.  Any items listed under the MAP
+            sections in the auto-generated config file should be
+            reviewed.  Any uncommented items in these sections must be
+            configured (uncommented items in other sections can be
+            ignored or commented out if they are not being used by
+            another Mesh component).  For the MAP, these include:
+
+                map_host
+                mp_host
+                self_host
+
+        4.2.2. /etc/mesh/mashrc
+
+            A skeleton for this file is auto-generated during
+            installation, which contains an XML description of
+            authorized commands and restrictions on those commands
+            enforced by Mash.  See "doc/mashrc.txt" for details of
+            Mash configuration.
+
+        4.2.3. /etc/mesh/mapkeys
+
+            This directory contains SSH private keys for the MAPs of
+            foreign VOs (see https://pkolano.github.io/papers/sacmat07.pdf).
+            These keys are used to retrieve public keys from foreign
+            MAPs and to map user names between VOs.  Keys must be named
+            to include the user, the host, and the port on that host.
+            For example, the following:
+
+                mapuser@map.example.com:1234
+
+            should contain a private key to access user "mapuser" on
+            host "map.example.com" where the SSH daemon on that host is
+            operating on port 1234.
+
+            Note that the mapkeys directory on the MP should contain
+            keys for foreign MPs while the mapkeys directory on the
+            MAP should contain keys for foreign MAPs.
+
+        4.2.4. /etc/passwd (or equivalent)
+
+            This file contains user account entries.  All normal users
+            (i.e. excluding system accounts such as "root", "nobody",
+            etc.) should have their login shell set to $PREFIX/bin/mash.
+            Administrative users with Mash as their login shell must
+            be explicitly allowed to run a different shell in
+            /etc/mesh/mashrc.  See "doc/mashrc.txt" for details of Mash
+            configuration and "etc/mashrc.map" for examples of
+            administrative setup.
+
+            An account must exist on the MAP corresponding to the value
+            of "mesh_user" in the MP/resource mesh.conf that is in the
+            Mesh group originally specified by the configure "--group"
+            option.  Similarly, any accounts used by foreign MAPs to
+            retreive public keys must also be configured in this file
+            and be members of the Mesh group.  The login shell of all
+            such accounts must be $PREFIX/bin/mash.
+
+        4.2.5. /etc/init.d/sshd (or equivalent)
+
+            This file contains commands for invoking the SSH daemon.
+            For Linux/BSD, the environment in which the SSH daemon
+            executes must contain the settings:
+
+                LD_PRELOAD=$PREFIX/lib/mesh_agent.so
+                MESH_LOCK=0
+
+            For IRIX, the LD_PRELOAD setting must be changed to:
+
+                _RLD_LIST=$PREFIX/lib/mesh_agent.so:DEFAULT:libgen.so:libC.so.2
+
+            These settings can be achieved by adding an appropriate
+            "env" command.  For example, on a Debian system, the
+            following:
+
+                start-stop-daemon --start --quiet --pidfile /var/run/sshd.pid \
+                    --exec /usr/sbin/sshd --startas /usr/bin/env --           \
+                    LD_PRELOAD=$PREFIX/lib/mesh_agent.so MESH_LOCK=0          \
+                    /usr/sbin/sshd $SSHD_OPTS
+
+            invokes the SSH daemon with the required environment
+            settings.
+
+        4.2.6. /etc/ssh/sshd_config (or equivalent)
+
+            This file contains SSH daemon configuration.  The only
+            required setting is:
+
+                PubkeyAuthentication yes
+
+            Note that this is the default setting in OpenSSH.
+
+        4.2.7. /etc/ssh/ssh_known_hosts (or equivalent)
+
+            This file contains SSH public keys for known hosts.  This
+            file should include a public key for all foreign MAPs for
+            which there is a private key in /etc/mesh/mapkeys.  This
+            file can be populated using the "ssh-keyscan" command.  For
+            example, the following:
+
+                ssh-keyscan -t rsa -p 1234 map.example.com \
+                    >>/etc/ssh/ssh_known_hosts
+
+            can be used to retrieve the public RSA key of host
+            "map.example.com" on port 1234 and append it to
+            /etc/ssh/ssh_known_hosts.
+
+        4.2.8. /var/spool/cron/crontabs/root (or equivalent)
+
+            A root crontab may optionally be defined to collect stats
+            on a periodic basis.  The $PREFIX/sbin/mesh-logstats command
+            takes a syslog stream on stdin and produces a set of result
+            tables on stdout.
+
+            # Collect daily Mesh usage stats at 8am and save in /dir
+            #   (assumes syslog of previous day in /var/log/syslog.0)
+            0 8 * * * /bin/cat /var/log/syslog.0 $PREFIX/sbin/mesh-logstats \
+                >/dir/mesh.`/bin/date +%m.%d.%y`
+
+        4.2.9. /home/$USER/.ssh/authorized_keys (or equivalent)
+
+            Any private keys distributed to foreign MAPs for public
+            key retrieval must have the corresponding public key stored
+            on the local MAP in the home directory of the user
+            corresponding to the account for which the private key is
+            valid.  This key must be owned by the same user and have
+            permissions 600 (i.e. read and write by owner).
+
+    4.3. Resource configuration
+
+        4.3.1. /etc/mesh/mesh.conf
+
+            A skeleton for this file is auto-generated during
+            installation, which contains name-value pairs describing
+            basic properties of Mesh.  Any items listed under the
+            resource sections in the auto-generated config file should
+            be reviewed.  Any uncommented items in these sections must
+            be configured (uncommented items in other sections can be
+            ignored or commented out if they are not being used by
+            another Mesh component).  On resources, these include:
+
+                map_host
+
+        4.3.2. /etc/mesh/meshrc
+
+            A skeleton for this file is auto-generated during
+            installation, which contains a list of globally authorized
+            commands that may be executed and globally authorized
+            directories that may be written.  These restrictions are
+            enforced by the MIA.  See "doc/meshrc.txt" for details of
+            this configuration file.
+
+        4.3.3. /etc/mesh/mapkeys/local
+
+            This file contains an SSH private key to retrieve public
+            keys from the local MAP.  An SSH key pair can be generated
+            using:
+
+                ssh-keygen -t rsa -f /etc/mesh/mapkeys/local
+
+            The contents of the resulting file "/etc/mesh/mapkeys/local.pub"
+            must be appended to the file "/home/mapuser/.ssh/authorized_keys"
+            on map.example.com (assuming the root of home directories is the
+            standard "/home").
+
+            Note that this file is not required if single sign-on is
+            disabled.
+
+        4.3.4. /etc/init.d/sshd (or equivalent)
+
+            This file contains commands for invoking the SSH daemon.
+            For Linux/BSD, the environment in which the SSH daemon
+            executes must contain the setting:
+
+                LD_PRELOAD=$PREFIX/lib/mesh_agent.so
+
+            For IRIX, the LD_PRELOAD setting must be changed to:
+
+                _RLD_LIST=$PREFIX/lib/mesh_agent.so:DEFAULT:libgen.so:libC.so.2
+
+            Optionally, the setting:
+
+                MESH_LOCK=0
+
+            may be included to disable host-level authorizations.  Also
+            optionally, the setting:
+
+                MESH_HOOK=0
+            
+            may be included to disable single sign-on.  Finally, the
+            optional setting:
+
+                MESH_MP_IPS="<space separated list of IPv4/v6 addresses>"
+
+            may be included to use single sign-on and host-level
+            authorizations only when a command has been invoked from a
+            specific host.  This is typically used with MP IP addresses
+            to permit single sign-on for commands passing through the
+            MP, but to disallow it otherwise.  This allows a single SSH
+            daemon to support both traditional SSH authentication
+            without additional authorizations as well as Mesh single
+            sign-on and host-level authorizations.  See the discussion
+            in https://pkolano.github.io/papers/sacmat07.pdf for
+            details.  Note that this setting is currently inoperable on
+            IRIX systems due to a problem intercepting the "accept"
+            system call.  Note that the setting:
+
+                MESH_MP_IPS=""
+            
+            disables both single sign-on and host-level authorizations.
+            These settings can be achieved by adding an appropriate
+            "env" command.  For example, on a Debian system, the
+            following:
+
+                start-stop-daemon --start --quiet --pidfile /var/run/sshd.pid \
+                    --exec /usr/sbin/sshd --startas /usr/bin/env --           \
+                    LD_PRELOAD=$PREFIX/lib/mesh_agent.so                      \
+                    MESH_MP_IPS="192.168.1.1 192.168.1.2"                     \
+                    /usr/sbin/sshd $SSHD_OPTS
+
+            invokes the SSH daemon with the MIA loaded and a MESH_MP_IPS
+            setting that will only allow single sign-on when a command
+            has been invoked through either "192.168.1.1" or
+            "192.168.1.2".
+
+        4.3.5. /etc/ssh/sshd_config (or equivalent)
+
+            This file contains SSH daemon configuration.  The only
+            required setting is:
+
+                PubkeyAuthentication yes
+
+            Note that this is the default setting in OpenSSH.
+
+        4.3.6. /etc/ssh/ssh_known_hosts (or equivalent)
+
+            This file contains SSH public keys for known hosts.  This
+            file should include a public key for the local MAP.  This
+            file can be populated using the "ssh-keyscan" command.  For
+            example, the following:
+
+                ssh-keyscan -t rsa -p 1234 map.example.com \
+                    >>/etc/ssh/ssh_known_hosts
+
+            can be used to retrieve the public RSA key of host
+            "map.example.com" on port 1234 and append it to
+            /etc/ssh/ssh_known_hosts.
+
+
+5. Activation
+
+    Once Mesh has been configured, the appropriate SSH daemons on the
+    MP, MAP, and/or resources must be restarted.  This is typically
+    achieved through the corresponding "/etc/init.d" script:
+
+        /etc/init.d/sshd restart
+
+    Note that if Mesh is installed into the primary SSH daemon on a
+    host, a separate root session should be left open in case any
+    problems are encountered (console access is also recommended).
+

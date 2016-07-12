@@ -1,0 +1,112 @@
+#!/bin/sh
+
+check_path () {
+    echo -n "checking for $1..."
+    IFS=":"
+    for dir in $PATH
+    do  
+        if [ -x $dir/$1 ]
+        then
+            echo "$dir/$1"
+            IFS=" "
+            return 0
+        fi
+    done
+    echo "not found"
+    IFS=" "
+    return 1
+}
+
+require_gnu_make()
+{
+    if check_path "make"
+    then
+        echo -n "checking if make is GNU..."
+        kind=`make -v 2>&1| head -1 | awk '{print $1}'`
+        if [ X$kind = XGNU ]
+        then
+            echo "yes"
+            return 0
+        else
+            echo "no"
+        fi
+    fi  
+    
+    if check_path "gmake"
+    then
+        echo -n "checking if gmake is GNU..."
+        kind=`gmake -v 2>&1| head -1 | awk '{print $1}'`
+        if [ X$kind = XGNU ]
+        then
+            echo "yes"
+            echo "*** NOTE: use 'gmake' instead of 'make' to build. ***"
+            return 0
+        else
+            echo "no"
+        fi
+    fi
+
+    echo "Sorry, you must have GNU make in your path."
+    exit 1
+}
+
+echo "configuring Mesh agent..."
+os=`uname`
+case $os in
+    IRIX*)
+        cxx="CC"
+        cxxdefs="-KPIC"
+        libdir="/lib32"
+        xlinker=""
+        extralibs="-lgen"
+        # this must be just libc.so or irix will not work
+        libc="libc.so"
+        preload="${PREFIX}lib/mesh_agent.so:DEFAULT:libgen.so:libC.so.2"
+        mpreload="_RLD_LIST=${preload}"
+        ;;
+    *)
+        cxx="g++"
+        cxxdefs="-fPIC -fno-exceptions -DHAS_LIBNSL -DHAS_LIBDL"
+        libdir="/lib"
+        xlinker="-Xlinker"
+        extralibs="-lnsl -ldl"
+        preload="${PREFIX}lib/mesh_agent.so"
+        mpreload="LD_PRELOAD=${preload}"
+
+        libc=`ls -1 ${libdir}*/libc.so* 2>/dev/null |tail -1`
+        if [ -z "$libc" ]; then libc=`ls -1 /usr${libdir}*/libc.so* 2>/dev/null |tail -1`; fi
+        if [ -z "$libc" ]; then libc=`ls -1 ${libdir}/*/libc.so* 2>/dev/null |tail -1`; fi
+        if [ -z "$libc" ]; then echo "*** ERROR: Can't find libc!"; exit 1; fi
+        libc=`basename ${libc}`
+        ;;
+esac
+
+require_gnu_make
+
+libpt=`ls -1 ${libdir}*/libpthread.so* 2>/dev/null |tail -1`
+if [ -z "$libpt" ]; then libpt=`ls -1 /usr${libdir}*/libpthread.so* 2>/dev/null |tail -1`; fi
+if [ -z "$libpt" ]; then libpt=`ls -1 ${libdir}/*/libpthread.so* 2>/dev/null |tail -1`; fi
+if [ -z "$libpt" ]; then echo "*** ERROR: Can't find libpthread!"; exit 1; fi
+libpt=`basename ${libpt}`
+cxxdefs="${cxxdefs} -DBYPASS_LIBC=\"\\\"${libc}\\\"\""
+cxxdefs="${cxxdefs} -DBYPASS_LIBPTHREAD=\"\\\"${libpt}\\\"\""
+cxxdefs="${cxxdefs} -DBYPASS_PRELOAD_LIST=\"\\\"${preload}\\\"\""
+cxxdefs="${cxxdefs} -DMESH_GETKEY_HOOK=\"\\\"${PREFIX}sbin/mesh-getkey-hook\\\"\""
+cxxdefs="${cxxdefs} -DMESH_PRELOAD=\"\\\"${mpreload}\\\"\""
+cxxdefs="${cxxdefs} -DMESH_MESHRC=\"\\\"/etc/mesh/meshrc\\\"\""
+cxxdefs="${cxxdefs} -DMESH_MESS=\"\\\"${PREFIX}bin/mess\\\"\""
+cxxdefs="${cxxdefs} -DMESH_MASH=\"\\\"${PREFIX}bin/mash\\\"\""
+
+echo "creating Makefile.config..."
+
+cat <<EOF >Makefile.config
+
+CXX=${cxx}
+CXXDEFS=${cxxdefs}
+XLINKER=${xlinker}
+EXTRALIBS=${extralibs}
+
+EOF
+
+exit 0
+

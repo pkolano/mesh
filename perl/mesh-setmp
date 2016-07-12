@@ -1,0 +1,166 @@
+#!/usr/bin/perl -T
+#
+# Copyright (C) 2006-2009 United States Government as represented by the
+# Administrator of the National Aeronautics and Space Administration
+# (NASA).  All Rights Reserved.
+#
+# This software is distributed under the NASA Open Source Agreement
+# (NOSA), version 1.3.  The NOSA has been approved by the Open Source
+# Initiative.  See http://www.opensource.org/licenses/nasa1.3.php
+# for the complete NOSA document.
+#
+# THE SUBJECT SOFTWARE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY OF ANY
+# KIND, EITHER EXPRESSED, IMPLIED, OR STATUTORY, INCLUDING, BUT NOT
+# LIMITED TO, ANY WARRANTY THAT THE SUBJECT SOFTWARE WILL CONFORM TO
+# SPECIFICATIONS, ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+# A PARTICULAR PURPOSE, OR FREEDOM FROM INFRINGEMENT, ANY WARRANTY THAT
+# THE SUBJECT SOFTWARE WILL BE ERROR FREE, OR ANY WARRANTY THAT
+# DOCUMENTATION, IF PROVIDED, WILL CONFORM TO THE SUBJECT SOFTWARE. THIS
+# AGREEMENT DOES NOT, IN ANY MANNER, CONSTITUTE AN ENDORSEMENT BY
+# GOVERNMENT AGENCY OR ANY PRIOR RECIPIENT OF ANY RESULTS, RESULTING
+# DESIGNS, HARDWARE, SOFTWARE PRODUCTS OR ANY OTHER APPLICATIONS RESULTING
+# FROM USE OF THE SUBJECT SOFTWARE.  FURTHER, GOVERNMENT AGENCY DISCLAIMS
+# ALL WARRANTIES AND LIABILITIES REGARDING THIRD-PARTY SOFTWARE, IF
+# PRESENT IN THE ORIGINAL SOFTWARE, AND DISTRIBUTES IT "AS IS".
+#
+# RECIPIENT AGREES TO WAIVE ANY AND ALL CLAIMS AGAINST THE UNITED STATES
+# GOVERNMENT, ITS CONTRACTORS AND SUBCONTRACTORS, AS WELL AS ANY PRIOR
+# RECIPIENT.  IF RECIPIENT'S USE OF THE SUBJECT SOFTWARE RESULTS IN ANY
+# LIABILITIES, DEMANDS, DAMAGES, EXPENSES OR LOSSES ARISING FROM SUCH USE,
+# INCLUDING ANY DAMAGES FROM PRODUCTS BASED ON, OR RESULTING FROM,
+# RECIPIENT'S USE OF THE SUBJECT SOFTWARE, RECIPIENT SHALL INDEMNIFY AND
+# HOLD HARMLESS THE UNITED STATES GOVERNMENT, ITS CONTRACTORS AND
+# SUBCONTRACTORS, AS WELL AS ANY PRIOR RECIPIENT, TO THE EXTENT PERMITTED
+# BY LAW.  RECIPIENT'S SOLE REMEDY FOR ANY SUCH MATTER SHALL BE THE
+# IMMEDIATE, UNILATERAL TERMINATION OF THIS AGREEMENT.
+#
+
+# This program sets the home MP and home MAP of the user.
+# It also sets remote MPs for calculations by mesh-getmp.
+
+use strict;
+use Getopt::Long qw(:config bundling no_ignore_case require_order);
+
+our $VERSION = 0.10;
+
+# default configuration
+my %conf = (
+    conf_file => "/etc/mesh/mesh.conf",
+    map_host => undef,
+    map_port => 22,
+    prefix_dir => "/usr/local",
+    self_host => undef,
+);
+
+# parse configuration
+open(FILE, $conf{conf_file}) or
+    die "Config file $conf{conf_file} does not exist or is not readable\n";
+my $mline;
+while (my $line = <FILE>) {
+    # strip whitespace and comments
+    $line =~ s/^\s+|\s+$|\s*#.*//g;
+    next if (!$line);
+    # support line continuation operator
+    $mline .= $line;
+    next if ($mline =~ s/\s*\\$/ /);
+    $conf{$1} = $2 if ($mline =~ /^(\S+)\s+(.*)/);
+    $mline = undef;
+}
+close FILE;
+
+# exit if any required parameters are not defined
+foreach my $key (keys %conf) {
+    die "Config parameter \"$key\" is not defined\n"
+        if (!$conf{$key});
+}
+
+# untaint path
+$ENV{PATH} = "/bin:/usr/bin:/usr/local/bin";
+
+# parse arguments
+my %opts = ();
+my $rc = GetOptions(\%opts,
+    "away=s", "home=s", "homemap=s", "local",
+);
+if (!$rc || scalar(@ARGV) != 0) {
+    die "Invalid options\n";
+} elsif ($opts{local} && !$opts{homemap}) {
+    die "The home MAP must be specified with --local\n";
+} elsif ($opts{local} && ($opts{away} || $opts{home})) {
+    die "Only --homemap may be specified with --local\n";
+} elsif (!$opts{local} && ($opts{home} && !$opts{homemap} ||
+        $opts{homemap} && !$opts{home})) {
+    die "Both --home and --homemap must be specified\n";
+}
+
+my $user = getpwuid($<);
+if ($opts{local} && $opts{homemap}) {
+    my $uhome = "$conf{prefix_dir}/var/meshmps/$user.home";
+    # given home MAP must be in form user@host
+    if ($opts{homemap} =~ /^([\w-]+)\@([\w-.]+)$/) {
+        # store given MAP specification for use by mesh-getkey and mesh-getmp
+        open(FILE, '>', $uhome) or die "Unable to open $user.home\n";
+        print FILE "$1\@$2\n";
+        close FILE;
+        # synchronize home MAPs
+        if ($conf{sync_hook}) {
+            my $cmd = $conf{sync_hook};
+            $cmd =~ s/%f/$uhome/g;
+            system("$cmd >/dev/null 2>/dev/null");
+        }
+        print "Home MAP set to $1\@$2\n";
+    } else {
+        die "Invalid MAP specification \"$opts{homemap}\"\n";
+    }
+} elsif ($opts{home}) {
+    my $uhome = "$conf{prefix_dir}/var/meshmps/$user.home";
+    # given home MP must be in form user@host
+    if ($opts{home} =~ /^([\w-]+)\@([\w-.]+)$/) {
+        # store given MP specification for use by mesh-getkey and mesh-getmp
+        open(FILE, '>', $uhome) or die "Unable to open $user.home\n";
+        print FILE "$1\@$2\n";
+        close FILE;
+        # synchronize home MPs
+        if ($conf{sync_hook}) {
+            my $cmd = $conf{sync_hook};
+            $cmd =~ s/%f/$uhome/g;
+            system("$cmd >/dev/null 2>/dev/null");
+        }
+        print "Home MP set to $1\@$2\n";
+    } else {
+        die "Invalid MP specification \"$opts{home}\"\n";
+    }
+    # given home MAP must be in form user@host
+    if ($opts{homemap} =~ /^([\w-]+)\@([\w-.]+)$/) {
+        if ($conf{self_host} ne $conf{map_host}) {
+            # invoke mesh-setmp on MAP if not combined MP/MAP
+            system("ssh -axq -p $conf{map_port} -oBatchMode=yes $conf{map_host} mesh-setmp --local --homemap $opts{homemap}");
+            die "Error setting home MAP on $conf{map_host}: $!\n" if ($?);
+        }
+    } else {
+        die "Invalid MAP specification \"$opts{homemap}\"\n";
+    }
+}
+if ($opts{away}) {
+    my @away;
+    foreach (split(/,/, $opts{away})) {
+        # given away MP(s) must be in form user@host
+        if (/^([\w-]+)\@([\w-.]+)$/) {
+            push(@away, "$1\@$2");
+        } else {
+            die "Invalid MP specification \"$_\"\n";
+        }
+    }
+    # store given MP specifications for use by mesh-getmp
+    my $uaway = "$conf{prefix_dir}/var/meshmps/$user.away";
+    open(FILE, '>', $uaway) or die "Unable to open $user.away\n";
+    print FILE "$_\n" foreach (@away);
+    close FILE;
+    # synchronize away MPs
+    if ($conf{sync_hook}) {
+        my $cmd = $conf{sync_hook};
+        $cmd =~ s/%f/$uaway/g;
+        system("$cmd >/dev/null 2>/dev/null");
+    }
+    print "Away MPs set to {$opts{away}}\n";
+}

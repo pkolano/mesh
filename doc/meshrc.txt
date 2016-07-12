@@ -1,0 +1,181 @@
+Meshrc Configuration
+====================
+
+Each Mesh-accessible resource enforces its own policy that specifies the
+directories that may be written and the commands that may be executed.
+Write authorizations are enforced at the system call level by the Mesh
+Interposition Agent (MIA).  Execute authorizations are enforced by the
+Mess Exec Security Shell (Mess), which is a restricted shell that is
+dynamically executed by the MIA in place of the user's default login
+shell.  See the discussion in https://pkolano.github.io/papers/sacmat07.pdf
+for details.
+
+Note that because the MIA uses library preloading, *ONLY* dynamically
+linked executables are subject to host authorizations.  To enforce
+authorizations on statically linked executables, you must use a
+different approach such as systrace (http://systrace.org).
+
+The policy for write and execute authorizations is split into two
+"meshrc" files: a global file defined by the administrator and an
+individual file defined by each user.
+
+
+1. Global meshrc
+
+    The global meshrc file is located at "$PREFIX/etc/mesh/meshrc",
+    where "$PREFIX" is the value of "--prefix" given to configure during
+    installation.  This file contains the policy applicable to all
+    users.
+
+    1.1. Write authorizations
+
+        A directory "/dir" and all files and directories beneath that
+        directory (i.e. /dir/*/*/.../*) may be written by all users
+        (still subject to normal file system permissions), if the global 
+        meshrc contains a line:
+
+            /dir
+
+        Note that a single slash by itself (i.e. the root directory)
+        will be ignored.  That is, writes cannot simply be authorized to
+        every single directory on the file system.  Also note that dot
+        files (i.e. ~/.*) in user home directories are never writable
+        regardless of the contents of the global or user meshrc file.
+
+    1.2. Basic execute authorizations
+
+        A command "/path/to/command" is allowed to execute on a system
+        if the global meshrc contains a line:
+
+            +x /path/to/command
+
+    1.3. Extended execute authorizations
+
+        Any command authorized using "+x /path/to/command" may have an
+        extended rule of the form:
+        
+            +command <Getopt string> <Perl string>
+            
+        Extended rules can be used to restrict command execution even
+        further.  The Getopt string consists of a string in either
+        Perl Getopt::Std or Getopt::Long format.  In Getopt::Long form,
+        option definitions must separated by commas (e.g. an integer
+        option "--iarg" and a string option "--sarg" would be specified
+        "iarg=i,sarg=s").
+
+        The Perl string consists of arbitrary Perl code that must return
+        a true value at the time the given command is executed.
+        Otherwise, the command will not be allowed to execute.
+        Several shorthands are defined within Mess:
+
+            "o(option)" is short for "$opts{option}", where %opts is the
+            (internal) hash in which the results of Getopt::Std or
+            Getopt::Long parsing are stored.  
+
+            "a(index)" is short for "$ARGV[index]".  An "a" by itself
+            is short for "scalar(@ARGV)".  The size of @ARGV is computed
+            after option parsing so will only include actual arguments.
+
+            "rc(index)" is short for "$rc[index]", where @rc is the
+            (internal) list of arguments obtained from the user's
+            individual meshrc file.  For example, if the user executed
+            the command "/path/to/command" and the user meshrc contained
+            a line "+command zero one two", "rc(0)" would evaluate to
+            "zero", "rc(1)" to "one", etc.
+
+            "w(path)" returns true if the base directory of the given
+            path has been authorized for writes in the global or user
+            meshrc.
+
+        The following example of an extended rule for the PBS qsub
+        command illustrates the power of this capability.  Note that
+        this example has been numbered and expanded for clarity.  The
+        meshrc format expects everything on a single line and does not
+        support line numbers or typical string semantics allowing
+        strings within open quotes across multiple lines.
+
+                +qsub 'hzIVa:c:e:j:k:l:m:o:p:q:r:u:v:A:C:J:M:N:S:W:' '
+            (1)     a >= 1 &&
+            (2)     !w(a(0)) &&
+            (3)     a(0) eq rc(0) &&
+            (4)     o(e) !~ /:/ && o(o) !~ /:/ &&
+            (5)     o(v) !~ /LD_|_RLD_/ &&
+            (6)     o(W) !~ /interactive|stage/ &&
+            (7)     !o(I) && !o(S) && !o(u) && !o(V) &&
+            (8)     (w(o(e)) || !o(e) && (w(o(o)) || !o(o)) &&
+            (9)     getpwuid($<) =~ /^(user1|user2))$/'
+
+        This rule specifies that qsub can take options {h, z, I, V}
+        without values and options {a, c, e, j, k, l, m, o, p, q, r, u,
+        v, A, C, J, M, N, S, W} with values and can only be executed
+        when all of the following conditions hold:
+
+            1. There is one or more arguments
+            2. The base directory of the first argument is not
+               authorized for writes
+            3. The first argument appears as the first element of one
+               of the +qsub extended rules in the user's ~/.meshrc
+            4. Neither the -e nor -o option values contain ":"
+            5. The -v option value does not contain "LD_" or "_RLD_"
+            6. The -W option value does not contain "interactive" or "stage"
+            7. None of the options -I, -S, -u, or -V were specified
+            8. The base directories of both the -e and -o option values
+               are authorized for writes or not specified
+            9. The invoking user is either "user1" or "user2"
+
+
+2. User meshrc
+
+    Each user has a meshrc file located at "~/.meshrc".  This file
+    contains a policy applicable only to the given user.  As a fail-safe
+    default, if this file does not exist, the user cannot execute any
+    commands on the system.  Thus, the accounts of users who have no
+    knowledge or need of Mesh are completely protected.
+
+    1.1. Write authorizations
+
+        Users may authorize additional directories beyond those
+        specified in the global meshrc.  A directory "/dir" and all
+        files and directories beneath that directory (i.e.
+        /dir/*/*/.../*) may be written by a given user (still subject to
+        normal file system permissions), if that user's meshrc
+        contains a line:
+
+            /dir
+
+        Note that a single slash by itself (i.e. the root directory)
+        will be ignored.  That is, writes cannot simply be authorized to
+        every single directory on the file system.  Also note that dot
+        files (i.e. ~/.*) in user home directories are never writable
+        regardless of the contents of the global or user meshrc file.
+
+        Finally, note that the MIA restricts writes by every process
+        spawned by the SSH daemon including the daemon itself, thus it
+        may be desirable to authorize certain directories for the root
+        user such as those for PID files (i.e. /var/run), devices
+        (i.e. /dev), etc.
+
+    1.2. Execute deauthorizations
+
+        Users cannot authorize additional commands, but can deauthorize
+        globally authorized commands if they have no need of them.  The
+        following line deauthorizes a command "/path/to/command"
+        authorized in the global meshrc:
+
+            -x /path/to/command
+
+    1.3. Extended rule arguments
+
+        Any global extended execute authorizations "+command ..." that
+        reference either "$rc[]" or its shorthand "rc()" require the
+        user to provide parameters using a meshrc line:
+        
+            +command parameter0 parameter1 ... parameterN
+        
+        The parameter(s) will be used while evaluating the global
+        extended rule to determine if the given command can execute.
+        For the qsub extended rule given as an example above, a
+        corresponding user meshrc parameter example would be:
+
+            +qsub /path/to/pbs/script
+

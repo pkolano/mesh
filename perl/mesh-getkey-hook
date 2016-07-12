@@ -1,0 +1,126 @@
+#!/usr/bin/perl -T
+#
+# Copyright (C) 2006-2009 United States Government as represented by the
+# Administrator of the National Aeronautics and Space Administration
+# (NASA).  All Rights Reserved.
+#
+# This software is distributed under the NASA Open Source Agreement
+# (NOSA), version 1.3.  The NOSA has been approved by the Open Source
+# Initiative.  See http://www.opensource.org/licenses/nasa1.3.php
+# for the complete NOSA document.
+#
+# THE SUBJECT SOFTWARE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY OF ANY
+# KIND, EITHER EXPRESSED, IMPLIED, OR STATUTORY, INCLUDING, BUT NOT
+# LIMITED TO, ANY WARRANTY THAT THE SUBJECT SOFTWARE WILL CONFORM TO
+# SPECIFICATIONS, ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+# A PARTICULAR PURPOSE, OR FREEDOM FROM INFRINGEMENT, ANY WARRANTY THAT
+# THE SUBJECT SOFTWARE WILL BE ERROR FREE, OR ANY WARRANTY THAT
+# DOCUMENTATION, IF PROVIDED, WILL CONFORM TO THE SUBJECT SOFTWARE. THIS
+# AGREEMENT DOES NOT, IN ANY MANNER, CONSTITUTE AN ENDORSEMENT BY
+# GOVERNMENT AGENCY OR ANY PRIOR RECIPIENT OF ANY RESULTS, RESULTING
+# DESIGNS, HARDWARE, SOFTWARE PRODUCTS OR ANY OTHER APPLICATIONS RESULTING
+# FROM USE OF THE SUBJECT SOFTWARE.  FURTHER, GOVERNMENT AGENCY DISCLAIMS
+# ALL WARRANTIES AND LIABILITIES REGARDING THIRD-PARTY SOFTWARE, IF
+# PRESENT IN THE ORIGINAL SOFTWARE, AND DISTRIBUTES IT "AS IS".
+#
+# RECIPIENT AGREES TO WAIVE ANY AND ALL CLAIMS AGAINST THE UNITED STATES
+# GOVERNMENT, ITS CONTRACTORS AND SUBCONTRACTORS, AS WELL AS ANY PRIOR
+# RECIPIENT.  IF RECIPIENT'S USE OF THE SUBJECT SOFTWARE RESULTS IN ANY
+# LIABILITIES, DEMANDS, DAMAGES, EXPENSES OR LOSSES ARISING FROM SUCH USE,
+# INCLUDING ANY DAMAGES FROM PRODUCTS BASED ON, OR RESULTING FROM,
+# RECIPIENT'S USE OF THE SUBJECT SOFTWARE, RECIPIENT SHALL INDEMNIFY AND
+# HOLD HARMLESS THE UNITED STATES GOVERNMENT, ITS CONTRACTORS AND
+# SUBCONTRACTORS, AS WELL AS ANY PRIOR RECIPIENT, TO THE EXTENT PERMITTED
+# BY LAW.  RECIPIENT'S SOLE REMEDY FOR ANY SUCH MATTER SHALL BE THE
+# IMMEDIATE, UNILATERAL TERMINATION OF THIS AGREEMENT.
+#
+
+# This program is invoked as root by mesh_agent.so to print the public
+# key(s) of the user given as the first argument to the stream given as
+# the second argument.
+
+use strict;
+use POSIX qw(setuid);
+
+our $VERSION = 0.15;
+
+# default configuration
+my %conf = (
+    conf_file => "/etc/mesh/mesh.conf",
+    home_dir => "/home",
+    map_port => 22,
+    mesh_user => "mesh",
+    prefix_dir => "/usr/local",
+    self_type => undef,
+);
+
+# required configuration
+my %req = (
+    map => [qw(home_dir)],
+    mp => [qw(mesh_user)],
+    resource => [qw(map_host mesh_user)],
+);
+
+# parse configuration
+open(FILE, $conf{conf_file}) or
+    die "Config file $conf{conf_file} does not exist or is not readable\n";
+my $mline;
+while (my $line = <FILE>) {
+    # strip whitespace and comments
+    $line =~ s/^\s+|\s+$|\s*#.*//g;
+    next if (!$line);
+    # support line continuation operator
+    $mline .= $line;
+    next if ($mline =~ s/\s*\\$/ /);
+    $conf{$1} = $2 if ($mline =~ /^(\S+)\s+(.*)/);
+    $mline = undef;
+}
+close FILE;
+
+# exit if any required parameters are not defined
+foreach my $key ("self_type", @{$req{$conf{self_type}}}) {
+    die "Config parameter \"$key\" is not defined\n"
+        if (!$conf{$key});
+}
+
+# untaint path
+$ENV{PATH} = "/bin:/usr/bin:/usr/local/bin";
+
+# untaint user
+my $user;
+if ($ARGV[0] =~ /^([\w-]+)$/) {
+    $user = $1;
+} else {
+    die "Invalid user\n";
+}
+
+# untaint file descriptor
+my $fd;
+if ($ARGV[1] =~ /^(\d+)$/) {
+    $fd = $1 
+} else {
+    die "Invalid file descriptor\n";
+}
+
+if ($conf{self_type} eq 'map') {
+    # return ~user/.ssh/authorized_keys on MAP
+    if (open(FILE, '<', "$conf{home_dir}/$user/.ssh/authorized_keys")) {
+        if (open(OUT, ">>&=", $fd)) {
+            print OUT $_ while (<FILE>);
+            close OUT;
+        }
+        close FILE;
+    }
+} elsif ($conf{self_type} eq 'mp') {
+    # switch to Mesh user to properly support remote ssh during mesh-getkey
+    my $uid = getpwnam($conf{mesh_user});
+    setuid($uid);
+    # set MESH_PUBKEY so mesh-getkey will be allowed by mash for Mesh user
+    $ENV{MESH_PUBKEY} = 1;
+    # invoke mesh-getkey to retrieve both local/foreign MP keys
+    system("$conf{prefix_dir}/bin/mash -c 'mesh-getkey $user' >&'$fd'");
+} elsif ($conf{self_type} eq 'resource') {
+    # ssh to MAP and invoke mesh-getkey to retrieve local/foreign MAP keys
+    system("ssh -qx -oBatchMode=yes -i /etc/mesh/mapkeys/local -l $conf{mesh_user} -p $conf{map_port} $conf{map_host} mesh-getkey '$user' >&'$fd'");
+}
+

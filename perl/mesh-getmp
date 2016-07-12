@@ -1,0 +1,166 @@
+#!/usr/bin/perl -T
+#
+# Copyright (C) 2006-2009 United States Government as represented by the
+# Administrator of the National Aeronautics and Space Administration
+# (NASA).  All Rights Reserved.
+#
+# This software is distributed under the NASA Open Source Agreement
+# (NOSA), version 1.3.  The NOSA has been approved by the Open Source
+# Initiative.  See http://www.opensource.org/licenses/nasa1.3.php
+# for the complete NOSA document.
+#
+# THE SUBJECT SOFTWARE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY OF ANY
+# KIND, EITHER EXPRESSED, IMPLIED, OR STATUTORY, INCLUDING, BUT NOT
+# LIMITED TO, ANY WARRANTY THAT THE SUBJECT SOFTWARE WILL CONFORM TO
+# SPECIFICATIONS, ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+# A PARTICULAR PURPOSE, OR FREEDOM FROM INFRINGEMENT, ANY WARRANTY THAT
+# THE SUBJECT SOFTWARE WILL BE ERROR FREE, OR ANY WARRANTY THAT
+# DOCUMENTATION, IF PROVIDED, WILL CONFORM TO THE SUBJECT SOFTWARE. THIS
+# AGREEMENT DOES NOT, IN ANY MANNER, CONSTITUTE AN ENDORSEMENT BY
+# GOVERNMENT AGENCY OR ANY PRIOR RECIPIENT OF ANY RESULTS, RESULTING
+# DESIGNS, HARDWARE, SOFTWARE PRODUCTS OR ANY OTHER APPLICATIONS RESULTING
+# FROM USE OF THE SUBJECT SOFTWARE.  FURTHER, GOVERNMENT AGENCY DISCLAIMS
+# ALL WARRANTIES AND LIABILITIES REGARDING THIRD-PARTY SOFTWARE, IF
+# PRESENT IN THE ORIGINAL SOFTWARE, AND DISTRIBUTES IT "AS IS".
+#
+# RECIPIENT AGREES TO WAIVE ANY AND ALL CLAIMS AGAINST THE UNITED STATES
+# GOVERNMENT, ITS CONTRACTORS AND SUBCONTRACTORS, AS WELL AS ANY PRIOR
+# RECIPIENT.  IF RECIPIENT'S USE OF THE SUBJECT SOFTWARE RESULTS IN ANY
+# LIABILITIES, DEMANDS, DAMAGES, EXPENSES OR LOSSES ARISING FROM SUCH USE,
+# INCLUDING ANY DAMAGES FROM PRODUCTS BASED ON, OR RESULTING FROM,
+# RECIPIENT'S USE OF THE SUBJECT SOFTWARE, RECIPIENT SHALL INDEMNIFY AND
+# HOLD HARMLESS THE UNITED STATES GOVERNMENT, ITS CONTRACTORS AND
+# SUBCONTRACTORS, AS WELL AS ANY PRIOR RECIPIENT, TO THE EXTENT PERMITTED
+# BY LAW.  RECIPIENT'S SOLE REMEDY FOR ANY SUCH MATTER SHALL BE THE
+# IMMEDIATE, UNILATERAL TERMINATION OF THIS AGREEMENT.
+#
+
+# This program outputs the MP host name and port responsible for a given
+# IP address.
+
+use strict;
+use Getopt::Long qw(:config bundling no_ignore_case require_order);
+use Net::Netmask;
+use Socket;
+
+our $VERSION = 0.20;
+
+# default configuration
+my %conf = (
+    conf_file => "/etc/mesh/mesh.conf",
+    mp_host => undef,
+    mp_port => 22,
+    net_self => "0.0.0.0/0",
+    prefix_dir => "/usr/local",
+);
+
+# parse configuration
+open(FILE, $conf{conf_file}) or
+    die "Config file $conf{conf_file} does not exist or is not readable\n";
+my $mline;
+while (my $line = <FILE>) {
+    # strip whitespace and comments
+    $line =~ s/^\s+|\s+$|\s*#.*//g;
+    next if (!$line);
+    # support line continuation operator
+    $mline .= $line;
+    next if ($mline =~ s/\s*\\$/ /);
+    $conf{$1} = $2 if ($mline =~ /^(\S+)\s+(.*)/);
+    $mline = undef;
+}
+close FILE;
+
+# exit if any required parameters are not defined
+foreach my $key (keys %conf) {
+    die "Config parameter \"$key\" is not defined\n"
+        if (!$conf{$key});
+}
+
+# untaint path
+$ENV{PATH} = "/bin:/usr/bin:/usr/local/bin";
+
+# parse arguments
+my %opts = ();
+my $rc = GetOptions(\%opts,
+    "local",
+);
+if (!$rc) {
+    die "Invalid options\n";
+} elsif (scalar(@ARGV) != 1) {
+    die "You must specify a host name\n";
+} elsif ($ARGV[0] !~ /[\w-]+(\.[\w-]+)*/) {
+    # not a simple or fully-qualified host name
+    die "Invalid host name\n";
+}
+# convert argument to dotted notation, if necessary
+my $ip4 = inet_aton($ARGV[0]);
+if (!defined $ip4 || length $ip4 != 4) {
+    die "Unable to resolve host name\n";
+}
+my $ip = inet_ntoa($ip4);
+if ($ip =~ /([\d.]+)/) {
+    $ip = $1;
+} else {
+    die "Unable to resolve host name\n";
+}
+
+# determine user on each MP
+my $user = getpwuid($<);
+my %users = ($conf{mp_host} => $user);
+if (open(FILE, "<$conf{prefix_dir}/var/meshmps/$user.away")) {
+    while (<FILE>) {
+        # away MP lines must be in form user@host
+        $users{$2} = $1 if (/([\w-]+)\@([\w-.]+)/);
+    }
+    close FILE;
+}
+
+# determine MP responsible for IP address and port on each MP
+my %ports;
+foreach my $key (grep(/^net_/, keys %conf)) {
+    # mp config lines must be in form "net_mphost:mpport netmask ..."
+    if ($key =~ /^net_([^:]+)(:\d+)?$/) {
+        my ($mp, $port) = ($1, $2);
+        if ($mp eq 'self') {
+            $mp = $conf{mp_host};
+            $port = $conf{mp_port};
+        }
+        $port = 22 if (!$port);
+        foreach my $mask (split(/\s+/, $conf{$key})) {
+            $mask = Net::Netmask->new($mask);
+            next if (!defined $mask);
+            if ($mask->match($ip)) {
+                if (defined $users{$mp}) {
+                    # print ssh string needed to access remote MP
+                    print "-A -oBatchMode=yes ";
+                    print "-oPort=$port " if ($port != 22);
+                    print "$users{$mp}\@$mp\n";
+                    close FILE;
+                    exit;
+                }
+            }
+            $ports{$mp} = $port;
+        }
+    }
+}
+close FILE;
+
+# contact home MP to find responsible MP if not available locally
+if (!$opts{local}) {
+    # determine home MP based on user's config
+    if (open(FILE, "<$conf{prefix_dir}/var/meshmps/$user.home")) {
+        my $home = <FILE>;
+        close FILE;
+        # home MP lines must be in form user@host
+        if ($home =~ /^([\w-]+)\@([\w-.]+)$/) {
+            my ($user, $mp) = ($1, $2);
+            if (defined $ports{$mp}) {
+                # attempt to retrieve MP access string from home MP
+                system("ssh -q -oBatchMode=yes -p $ports{$mp} $mp mesh-getmp --local $ip");
+                exit;
+            }
+        }
+    }
+}
+print STDERR "Unable to determine MP responsible for $ARGV[0]\n";
+

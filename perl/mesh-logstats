@@ -1,0 +1,270 @@
+#!/usr/bin/perl -T
+#
+# Copyright (C) 2006-2009 United States Government as represented by the
+# Administrator of the National Aeronautics and Space Administration
+# (NASA).  All Rights Reserved.
+#
+# This software is distributed under the NASA Open Source Agreement
+# (NOSA), version 1.3.  The NOSA has been approved by the Open Source
+# Initiative.  See http://www.opensource.org/licenses/nasa1.3.php
+# for the complete NOSA document.
+#
+# THE SUBJECT SOFTWARE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY OF ANY
+# KIND, EITHER EXPRESSED, IMPLIED, OR STATUTORY, INCLUDING, BUT NOT
+# LIMITED TO, ANY WARRANTY THAT THE SUBJECT SOFTWARE WILL CONFORM TO
+# SPECIFICATIONS, ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+# A PARTICULAR PURPOSE, OR FREEDOM FROM INFRINGEMENT, ANY WARRANTY THAT
+# THE SUBJECT SOFTWARE WILL BE ERROR FREE, OR ANY WARRANTY THAT
+# DOCUMENTATION, IF PROVIDED, WILL CONFORM TO THE SUBJECT SOFTWARE. THIS
+# AGREEMENT DOES NOT, IN ANY MANNER, CONSTITUTE AN ENDORSEMENT BY
+# GOVERNMENT AGENCY OR ANY PRIOR RECIPIENT OF ANY RESULTS, RESULTING
+# DESIGNS, HARDWARE, SOFTWARE PRODUCTS OR ANY OTHER APPLICATIONS RESULTING
+# FROM USE OF THE SUBJECT SOFTWARE.  FURTHER, GOVERNMENT AGENCY DISCLAIMS
+# ALL WARRANTIES AND LIABILITIES REGARDING THIRD-PARTY SOFTWARE, IF
+# PRESENT IN THE ORIGINAL SOFTWARE, AND DISTRIBUTES IT "AS IS".
+#
+# RECIPIENT AGREES TO WAIVE ANY AND ALL CLAIMS AGAINST THE UNITED STATES
+# GOVERNMENT, ITS CONTRACTORS AND SUBCONTRACTORS, AS WELL AS ANY PRIOR
+# RECIPIENT.  IF RECIPIENT'S USE OF THE SUBJECT SOFTWARE RESULTS IN ANY
+# LIABILITIES, DEMANDS, DAMAGES, EXPENSES OR LOSSES ARISING FROM SUCH USE,
+# INCLUDING ANY DAMAGES FROM PRODUCTS BASED ON, OR RESULTING FROM,
+# RECIPIENT'S USE OF THE SUBJECT SOFTWARE, RECIPIENT SHALL INDEMNIFY AND
+# HOLD HARMLESS THE UNITED STATES GOVERNMENT, ITS CONTRACTORS AND
+# SUBCONTRACTORS, AS WELL AS ANY PRIOR RECIPIENT, TO THE EXTENT PERMITTED
+# BY LAW.  RECIPIENT'S SOLE REMEDY FOR ANY SUCH MATTER SHALL BE THE
+# IMMEDIATE, UNILATERAL TERMINATION OF THIS AGREEMENT.
+#
+
+# This program outputs a set of tables summarizing the outstanding keys,
+# commands per {day,user,source,target}, and totals per command.
+# This output is constructed from syslog files read from stdin when
+# logging is enabled.
+
+use strict;
+use Date::Parse;
+use Getopt::Long qw(:config bundling no_ignore_case require_order);
+use Socket;
+use Text::Table;
+
+our $VERSION = 0.17;
+
+# default configuration
+my %conf = (
+    conf_file => "/etc/mesh/mesh.conf",
+    prefix_dir => "/usr/local",
+);
+
+# parse configuration
+open(FILE, $conf{conf_file}) or
+    die "Config file $conf{conf_file} does not exist or is not readable\n";
+my $mline;
+while (my $line = <FILE>) {
+    # strip whitespace and comments
+    $line =~ s/^\s+|\s+$|\s*#.*//g;
+    next if (!$line);
+    # support line continuation operator
+    $mline .= $line;
+    next if ($mline =~ s/\s*\\$/ /);
+    $conf{$1} = $2 if ($mline =~ /^(\S+)\s+(.*)/);
+    $mline = undef;
+}
+close FILE;
+
+# exit if any required parameters are not defined
+foreach my $key (keys %conf) {
+    die "Config parameter \"$key\" is not defined\n"
+        if (!$conf{$key});
+}
+
+# parse arguments
+my %opts = ();
+my $rc = GetOptions(\%opts, "days=i");
+$opts{days} = 7 if (!$opts{days});
+$opts{days}--;
+
+my @lines = ();
+my %days = ();
+my %users = ();
+my %srcs = ();
+my %dsts = ();
+my %cmds = ();
+while (<>) {
+    # extract details from syslog lines
+    if (/(.*)\s+(\S+)\s+mash\S*\s+(\S+)\s+(\S+)\s+(.*)/) {
+        my ($time, $dst, $user, $src, $msg) = ($1, $2, $3, $4, $5);
+        my $cmd;
+        if ($msg =~ /^EXIT/) {
+            # command was not authorized
+            $cmd = "error";
+        } elsif ($msg =~ /^EXEC\s+(.*)/) {
+            # command was executed
+            $cmd = $1;
+            if ($cmd =~ /^\S+ssh'[^\/]*\s+'([\w.-]+)'\s+'(\/\S+)'/) {
+                # remote command so extract destination
+                ($dst, $cmd) = ($1, $2);
+                $cmd =~ s/^.*\///;
+            } else {
+                # local command
+                $cmd =~ s/'\s.*$//;
+                $cmd =~ s/'$//;
+                $cmd =~ s/^.*\///;
+            }
+        } else {
+            next;
+        }
+        # resolve host names
+        my $tmp = gethostbyaddr(inet_aton($dst), AF_INET);
+        $dst = $tmp if ($tmp);
+        $tmp = gethostbyaddr(inet_aton($src), AF_INET);
+        $src = $tmp if ($tmp);
+        # convert date string to mm/dd/yy format
+        my @date = localtime(str2time($time));
+        my $day = sprintf("%02d", $date[4] + 1) . "/" .
+            sprintf("%02d", $date[3]) . "/" .
+            sprintf("%02d", $date[5] % 100);
+        # save data for table creation (cmd must always be last)
+        push(@lines, "day:$day user:$user source:$src target:$dst cmd:$cmd ");
+        $days{$day} = 1;
+        $users{$user} = 1;
+        $srcs{$src} = 1;
+        $dsts{$dst} = 1;
+        $cmds{$cmd} = 1;
+    }
+}
+
+# create keys per user table
+my @row = ({title => "user\n" . "-" x 4, align_title => 'center'});
+push(@row, \' | ');
+push(@row, {title => "expired\n" . "-" x 7, align_title => 'center'});
+my %keys = (expired => 0, total => 0);
+for (0..$opts{days}) {
+    $keys{$_} = 0;
+    push(@row, \' | ');
+    my $title = $_ . "-" . ($_ + 1) . " days";
+    push(@row, {title => "$title\n" . "-" x length($title),
+        align_title => 'center'});
+}
+push(@row, \' | ');
+push(@row, {title => "all\n" . "-" x 3, align_title => 'center'});
+my $t = Text::Table->new(@row);
+
+# add row for each user
+my $time0 = time;
+foreach my $key (glob "$conf{prefix_dir}/var/meshkeys/*") {
+    # ignore temporary keys that were never finalized
+    next if ($key =~ /\.tmp/);
+    my %count;
+    my $count;
+    open(KEY, "<$key") or next;
+    while (<KEY>) {
+        # read the expiration time of each key
+        if (/\s+(\d+)\s*$/) {
+            my $time1 = $1;
+            $count++;
+            if ($time1 < $time0) {
+                $count{expired}++;
+            } else {
+                $count{int(($time1 - $time0) / 86400)}++;
+            }
+        }
+    }
+    close KEY;
+    next if (!$count);
+    $key =~ s/.*\///g;
+    $count{expired} = '' if (!$count{expired});
+
+    # fill out row for each user with expiration counts
+    @row = ($key, $count{expired});
+    for (0..$opts{days}) {
+        $count{$_} = '' if (!$count{$_});
+        push(@row, $count{$_});
+        $keys{$_} += $count{$_};
+    }
+    push(@row, $count);
+    $keys{total} += $count;
+    $keys{expired} += $count{expired};
+    $t->add(@row);
+}
+# add totals of all columns
+@row = ("\nall");
+push(@row, "\n" . $keys{expired});
+for (0..$opts{days}) {
+    push(@row, "\n" . $keys{$_});
+}
+push(@row, "\n" . $keys{total});
+$t->add(@row);
+print "Keys per user\n\n$t\n\n";
+
+# create commands per day, user, source, and target tables
+my @types = ("day", "user", "source", "target");
+my @tdata = (\%days, \%users, \%srcs, \%dsts);
+@row = ();
+for (my $i = 0; $i < scalar(@types); $i++) {
+    my $title = $types[$i];
+    @row = ({title => "$title\n" . "-" x length($title),
+        align_title => 'center'});
+    foreach my $cmd (sort(keys(%cmds))) {
+        push(@row, \' | ');
+        push(@row, {title => "$cmd\n" . "-" x length($cmd),
+            align_title => 'center'});
+    }
+    push(@row, \' | ');
+    push(@row, {title => "all\n" . "-" x 3, align_title => 'center'});
+    $t = Text::Table->new(@row);
+    foreach my $user (sort(keys(%{$tdata[$i]}))) {
+        @row = ($user);
+        my $total = 0;
+        foreach my $cmd (sort(keys(%cmds))) {
+            # search for lines with given type value, user, and command
+            my $count = grep(/\Q$title\E:\Q$user\E .*cmd:\Q$cmd\E /, @lines);
+            $total += $count;
+            $count = '' if (!$count);
+            push(@row, $count);
+        }
+        # add total invocations per table type
+        push(@row, $total);
+        $t->add(@row);
+    }
+    print "Commands per $title\n\n$t\n\n";
+}
+
+# create totals per command table
+@row = ();
+push(@row, {title => "command\n" . "-" x 7, align_title => 'center'});
+foreach my $type (@types) {
+    push(@row, \' | ');
+    push(@row, {title => $type . "s\n-" . "-" x length($type),
+        align_title => 'center'});
+}
+push(@row, \' | ');
+push(@row, {title => "calls\n" . "-" x 5, align_title => 'center'});
+$t = Text::Table->new(@row);
+
+# count unique days, users, sources, targets, and total calls
+foreach my $cmd (sort(keys(%cmds))) {
+    @row = ($cmd);
+    foreach my $type (@types) {
+        my %uniq = ();
+        # find unique instances of each command
+        foreach my $line (grep(/cmd:\Q$cmd\E /, @lines)) {
+            if ($line =~ /\Q$type\E:(\S+)/) {
+                $uniq{$1} = 1;
+            }
+        }
+        push(@row, scalar(keys(%uniq)));
+    }
+    # add total invocations of each command
+    push(@row, scalar(grep(/cmd:\Q$cmd\E /, @lines)));
+    $t->add(@row);
+}
+
+# add totals of all days, users, sources, and targets
+@row = ("\nall");
+for (my $i = 0; $i < scalar(@types); $i++) {
+    push(@row, "\n" . scalar(keys(%{$tdata[$i]})));
+}
+# add total calls across all commands
+push(@row, "\n" . scalar(@lines));
+$t->add(@row);
+print "Totals per command\n\n$t\n\n";
+

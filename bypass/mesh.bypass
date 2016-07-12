@@ -1,0 +1,937 @@
+//
+// Copyright (C) 2006 United States Government as represented by the
+// Administrator of the National Aeronautics and Space Administration
+// (NASA).  All Rights Reserved.
+//
+// This software is distributed under the NASA Open Source Agreement
+// (NOSA), version 1.3.  The NOSA has been approved by the Open Source
+// Initiative.  See http://www.opensource.org/licenses/nasa1.3.php
+// for the complete NOSA document.
+//
+// THE SUBJECT SOFTWARE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY OF ANY
+// KIND, EITHER EXPRESSED, IMPLIED, OR STATUTORY, INCLUDING, BUT NOT
+// LIMITED TO, ANY WARRANTY THAT THE SUBJECT SOFTWARE WILL CONFORM TO
+// SPECIFICATIONS, ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+// A PARTICULAR PURPOSE, OR FREEDOM FROM INFRINGEMENT, ANY WARRANTY THAT
+// THE SUBJECT SOFTWARE WILL BE ERROR FREE, OR ANY WARRANTY THAT
+// DOCUMENTATION, IF PROVIDED, WILL CONFORM TO THE SUBJECT SOFTWARE. THIS
+// AGREEMENT DOES NOT, IN ANY MANNER, CONSTITUTE AN ENDORSEMENT BY
+// GOVERNMENT AGENCY OR ANY PRIOR RECIPIENT OF ANY RESULTS, RESULTING
+// DESIGNS, HARDWARE, SOFTWARE PRODUCTS OR ANY OTHER APPLICATIONS RESULTING
+// FROM USE OF THE SUBJECT SOFTWARE.  FURTHER, GOVERNMENT AGENCY DISCLAIMS
+// ALL WARRANTIES AND LIABILITIES REGARDING THIRD-PARTY SOFTWARE, IF
+// PRESENT IN THE ORIGINAL SOFTWARE, AND DISTRIBUTES IT "AS IS".
+//
+// RECIPIENT AGREES TO WAIVE ANY AND ALL CLAIMS AGAINST THE UNITED STATES
+// GOVERNMENT, ITS CONTRACTORS AND SUBCONTRACTORS, AS WELL AS ANY PRIOR
+// RECIPIENT.  IF RECIPIENT'S USE OF THE SUBJECT SOFTWARE RESULTS IN ANY
+// LIABILITIES, DEMANDS, DAMAGES, EXPENSES OR LOSSES ARISING FROM SUCH USE,
+// INCLUDING ANY DAMAGES FROM PRODUCTS BASED ON, OR RESULTING FROM,
+// RECIPIENT'S USE OF THE SUBJECT SOFTWARE, RECIPIENT SHALL INDEMNIFY AND
+// HOLD HARMLESS THE UNITED STATES GOVERNMENT, ITS CONTRACTORS AND
+// SUBCONTRACTORS, AS WELL AS ANY PRIOR RECIPIENT, TO THE EXTENT PERMITTED
+// BY LAW.  RECIPIENT'S SOLE REMEDY FOR ANY SUCH MATTER SHALL BE THE
+// IMMEDIATE, UNILATERAL TERMINATION OF THIS AGREEMENT.
+//
+
+// This code produces the Mesh Interposition Agent (MIA) that is preloaded
+// into sshd and inherited by invoked commands to dynamically retrieve
+// public keys and enforce write authorizations.  It is written in a
+// specialized superset of C++ called Bypass that facilitates the creation
+// of interposition agents.  Additional information about Bypass is available
+// at http://research.cs.wisc.edu/condor/bypass.  Mesh is distributed with a
+// modified version of Bypass that has increased security.  Bypass
+// transforms mesh.bypass into intermediate C++ code that is compiled into
+// the final loadable library.
+
+agent_prologue {{
+    @include <alloca.h>
+    @include <arpa/inet.h>
+    @include <libgen.h>
+    @include <netdb.h>
+    @include <pwd.h>
+    @include <sys/wait.h>
+
+    @define TYPE_RC 0
+    @define TYPE_KEY 1
+    @define TYPE_USER 2
+    @define TYPE_DIR 3
+
+#ifdef sgi
+    @include <ctype.h>
+    @define PATH_MAX MAXPATHLEN
+#endif
+
+    int mesh_init = 0;
+
+    int mesh_hook = 1;
+
+    int mesh_lock = 1;
+    int mesh_lock0 = 1;
+
+    char *mesh_mp_ips = NULL;
+
+    char *mesh_pubkey = NULL;
+
+    FILE *keystream = NULL;
+
+    extern char **environ;
+
+    // agent initialization that should be called before every
+    // intercepted system call
+    void agent_init() {
+        if (mesh_init) return;
+        if (mesh_lock && getuid() == 0) {
+            char *tmp = getenv("MESH_LOCK");
+            if (tmp != NULL && !strcmp(tmp, "0")) {
+                mesh_lock = 0;
+                mesh_lock0 = 0;
+            }
+        }
+        if (mesh_hook) {
+            char *tmp = getenv("MESH_HOOK");
+            if (tmp != NULL && !strcmp(tmp, "0")) mesh_hook = 0;
+        }
+        if (mesh_mp_ips == NULL && getuid() == 0) {
+            char *tmp = getenv("MESH_MP_IPS");
+            if (tmp != NULL) {
+                size_t size = strlen(tmp);
+                mesh_mp_ips = (char *) malloc(size + 1);
+                if (mesh_mp_ips != NULL) {
+                    strncpy(mesh_mp_ips, tmp, size);
+                    mesh_mp_ips[size] = '\0';
+                }
+            }
+        }
+        mesh_init = 1;
+    }
+
+    // just like realpath except when path doesn't exist, the real
+    // path will be constructed as if it did
+    char *myrealpath(const char *path, char *real_path) {
+        // real_path must be at least of size PATH_MAX
+        if (realpath(path, real_path) == NULL) {
+            if (errno != ENOENT) return NULL;
+            // file doesn't exist yet, so construct real path manually
+
+            // copy path since it may be modified by dirname
+            char *path_copy = (char *) alloca(PATH_MAX);
+            strncpy(path_copy, path, PATH_MAX - 1);
+            path_copy[PATH_MAX - 1] = '\0';
+            // get real path of parent directory
+            if (myrealpath(dirname(path_copy), real_path) == NULL) return NULL;
+
+            // copy path again since it may be modified by basename
+            strncpy(path_copy, path, PATH_MAX - 1);
+            path_copy[PATH_MAX - 1] = '\0';
+            char *base = basename(path_copy);
+
+            // add basename to real path of parent directory
+            if (strlen(real_path) + strlen(base) + 2 > PATH_MAX) return NULL;
+            sprintf(&real_path[strlen(real_path)], "/%s", base);
+        }
+        return real_path;
+    }
+
+    // return true if given real path matches the given base file in
+    // the given dir, false otherwise
+    int concat_match(const char *real_path, const char *dir, const char *base,
+            int exact = 0) {
+        if (real_path == NULL || dir == NULL || base == NULL) return 0;
+        char *abs_path = (char *) alloca(strlen(dir) + strlen(base) + 2);
+        sprintf(abs_path, "%s/%s", dir, base);
+        char *real_abs_path = (char *) alloca(PATH_MAX);
+        if (myrealpath(abs_path, real_abs_path) == NULL) return 0;
+        // special treatment for base == "."
+        if (base[0] == '.' && strlen(base) == 1 &&
+                strlen(real_abs_path) + 3 <= PATH_MAX) {
+            sprintf(&real_abs_path[strlen(real_abs_path)], "/.");
+        }
+        // special treatment for base == ""
+        if (!exact && strlen(base) == 0) {
+            // ignore root directory authorizations
+            if (strlen(real_abs_path) == 1 && real_abs_path[0] == '/') return 0;
+            // disallow operations on authorized directory itself
+            if (strlen(real_path) <= strlen(real_abs_path)) return 0;
+            // disallow operations on files beginning with an authorized directory prefix
+            if (real_path[strlen(real_abs_path)] != '/') return 0;
+        }
+        if (!exact && !strncmp(real_path, real_abs_path,
+                strlen(real_abs_path))) return 1;
+        if (exact && !strcmp(real_path, real_abs_path)) return 1;
+        return 0;
+    }
+
+    // return true if given real path is within directory authorized for
+    // writes by given meshrc file (i.e. global or user), false otherwise
+    int meshrc_match(const char *meshrc, const char *real_path) {
+        FILE *f;
+        if ((f = fopen(meshrc, "r")) == NULL) return 0;
+        char *dir = (char *) alloca(PATH_MAX);
+        while (fgets(dir, PATH_MAX, f) != NULL) {
+            // if max length read before newline, disallow everything
+            if (strlen(dir) == PATH_MAX - 1) break;
+            int i, j;
+            // trim trailing whitespace
+            for (i = strlen(dir) - 1; i >= 0; --i) {
+                if (dir[i] == ' ' || dir[i] == '\n' ||
+                        dir[i] == '\t' || dir[i] == '\r') {
+                    dir[i] = 0;
+                } else {
+                    break;
+                }
+            }
+            if (i < 0) continue;
+            // trim leading whitespace
+            for (j = 0; j < i; j++) {
+                if (dir[j] != ' ' && dir[j] != '\t') {
+                    break;
+                }
+            }
+            // match when given path is in permitted directory
+            if (dir[j] != '+' && dir[j] != '-' && dir[j] != '#' &&
+                    concat_match(real_path, &dir[j], "")) {
+                fclose(f);
+                return 1;
+            }
+        }
+        fclose(f);
+        return 0;
+    }
+
+    // return true if given path matches given type, false otherwise
+    int match(const char *path, int type) {
+        if (path == NULL) return 0;
+        char *real_path = (char *) alloca(PATH_MAX);
+        // get real path of given path without symlinks, etc.
+        if (myrealpath(path, real_path) == NULL) return 0;
+
+        // fix for getpwuid hanging problem during ps -f
+        if (!strcmp(real_path, "/dev/urandom")) return 0;
+        if (!strcmp(real_path, "/etc/ldap.conf")) return 0;
+
+        // get path of home directory
+        struct passwd *pw = getpwuid(geteuid());
+        if (pw == NULL || pw->pw_dir == NULL) return 0;
+        if (type == TYPE_USER) {
+            // disallow writes to ~/.meshrc
+            if (concat_match(real_path, pw->pw_dir, ".meshrc", 1)) return 0;
+            // disallow writes to ~/.ssh/authorized_keys
+            if (concat_match(real_path, pw->pw_dir, ".ssh/authorized_keys", 1))
+                return 0;
+            // allow writes to directories in global meshrc
+            if (meshrc_match(MESH_MESHRC, real_path)) return 1;
+            // allow writes to directories in ~/.meshrc
+            char *meshrc = (char *) alloca(strlen(pw->pw_dir) + 9);
+            // make sure any changes below are reflected in the 9 above
+            sprintf(meshrc, "%s/.meshrc", pw->pw_dir);
+            if (meshrc_match(meshrc, real_path)) return 1;
+        } else if (type == TYPE_RC &&
+                // allow reads to ~/.meshrc and ~/.ssh/authorized_keys
+                !concat_match(real_path, pw->pw_dir, ".meshrc", 1) &&
+                !concat_match(real_path, pw->pw_dir,
+                    ".ssh/authorized_keys", 1) &&
+                // disallow reads of ~/.* including .cshrc, .tcshrc,
+                // .zshenv, .ssh/rc, and .qstatrc, which are capable of
+                // breaking the security policy
+                concat_match(real_path, pw->pw_dir, ".")) {
+            return 1;
+        } else if (type == TYPE_RC &&
+                // allow reads to ~/.meshrc and ~/.ssh/authorized_keys
+                !concat_match(real_path, pw->pw_dir, ".meshrc", 1) &&
+                !concat_match(real_path, pw->pw_dir,
+                    ".ssh/authorized_keys", 1)) {
+            // disallow reads of ~/.* for files symlinked to non-. file
+            char *real_home = (char *) alloca(PATH_MAX);
+            if (myrealpath(pw->pw_dir, real_home) == NULL) return 0;
+            // copy original non-real path so it can be modified
+            char *path_copy = (char *) alloca(strlen(path) + 1);
+            sprintf(path_copy, "%s", path);
+            char *dir_name = "";
+            if (dirname(path_copy)[0] == '.') dir_name = ".";
+            // copy path again since it may be modified by dirname
+            sprintf(path_copy, "%s", path);
+            char *dot = path_copy;
+            while ((dot = strchr(dot, '.')) != NULL) {
+                *dot = '\0';
+                // match when prefix is home directory and suffix is
+                // a . file that is not . or ..
+                if (concat_match(real_home, dir_name, path_copy, 1) && (
+                        dot[1] != '\0' && dot[1] != '/' && dot[1] != '.' ||
+                        dot[1] == '.' && dot[2] != '\0' && dot[2] != '/'))
+                    return 1;
+                *dot = '.';
+                dot++;
+            }
+            // drop out and return 0
+        } else if (type == TYPE_KEY &&
+                // match on public key files
+                concat_match(real_path, pw->pw_dir,
+                    ".ssh/authorized_keys", 1)) {
+            return 1;
+        } else if (type == TYPE_DIR &&
+                // match on public key directory
+                concat_match(real_path, pw->pw_dir, ".ssh", 1)) {
+            return 1;
+        }
+        return 0;
+    }
+
+    // return true if given path in given directory descriptor matches
+    // given type, false otherwise (only works correctly on linux)
+    int matchat(int dirfd, const char *path, int type) {
+        if (path == NULL) return 0;
+#ifdef linux
+        // use standard match if dirfd is current directory
+        if (dirfd == AT_FDCWD) return match(path, type);
+        // this only works with /proc
+        char *link = (char *) alloca(PATH_MAX);
+        int rc = snprintf(link, PATH_MAX, "/proc/self/fd/%d", dirfd);
+        if (rc < 0 || rc >= PATH_MAX) return 0;
+        char *dir = (char *) alloca(PATH_MAX);
+        if (readlink(link, dir, PATH_MAX) < 0) return 0;
+        char *match_path = (char *) alloca(strlen(dir) + strlen(path) + 2);
+        sprintf(match_path, "%s/%s", dir, path);
+        return match(match_path, type);
+#else
+        return 0;
+#endif
+    }
+
+#ifdef sgi
+    // not defined in irix libc
+    char *strcasestr(const char *s, const char *find) {
+        char c, sc;
+        size_t len;
+
+        if (s == NULL || find == NULL) return NULL;
+
+        if ((c = *find++) != 0) {
+            c = tolower((unsigned char) c);
+            len = strlen(find);
+            do {
+                do {
+                    if ((sc = *s++) == 0) return (NULL);
+                } while ((char) tolower((unsigned char) sc) != c);
+            } while (strncasecmp(s, find, len) != 0);
+            s--;
+        }
+        return ((char *)s);
+    }
+#endif
+
+    const char *exec_path(const char *path) {
+        if (mesh_lock) {
+            struct passwd *pw = getpwuid(geteuid());
+            if (pw != NULL && pw->pw_shell != NULL &&
+                    !strcmp(path, pw->pw_shell) &&
+                    strcmp(path, MESH_MASH)) {
+                return MESH_MESS;
+            }
+        }
+        return path;
+    }
+
+    // fill given new environment with required items in given existing
+    // environment with given number of items
+    char **exec_envp(char* const *envp, char **newenvp, int count) {
+        // guarantee that correct variables are retained across execs
+        int i, j = 0;
+        for (i = 0; i < count; i++) {
+            // ignore environment variables that affect library loading
+            if (!strncmp(envp[i], "LD_", 3)) continue;
+            else if (!strncmp(envp[i], "_RLD", 4)) continue;
+            else if (!strncmp(envp[i], "BYPASS_", 7)) continue;
+            // ignore mesh variables
+            else if (!strncmp(envp[i], "MESH_", 5)) continue;
+            newenvp[j++] = envp[i];
+        }
+        // add correct preload back into environment when needed
+        if (mesh_lock || mesh_hook && getuid() == 0)
+            newenvp[j++] = MESH_PRELOAD;
+        // preserve mesh variables across execs
+        if (!mesh_lock) newenvp[j++] = "MESH_LOCK=0";
+        if (!mesh_hook) newenvp[j++] = "MESH_HOOK=0";
+        if (mesh_pubkey != NULL) newenvp[j++] = mesh_pubkey;
+        newenvp[j++] = NULL;
+        return newenvp;
+    }
+}};
+
+#ifndef sgi
+// this does not compile under sgi CC
+int accept(int s, struct sockaddr *addr, socklen_t *addrlen) agent_action {{
+    if (!mesh_init) agent_init();
+    struct sockaddr addr_tmp;
+    socklen_t addrlen_tmp = sizeof(addr_tmp);
+    if (addr == NULL) {
+        // make sure addr is non-null so address is returned
+        addr = &addr_tmp;
+        addrlen = &addrlen_tmp;
+    }
+    int ns = accept(s, addr, addrlen);
+    if (ns >= 0) {
+        if (mesh_mp_ips != NULL) {
+            // get remote addr as string
+            char sip[NI_MAXHOST];
+            if (addr->sa_family == AF_INET6) {
+                inet_ntop(AF_INET6,
+                    &(((struct sockaddr_in6 *) addr)->sin6_addr),
+                    sip, NI_MAXHOST - 1);
+            } else {
+                inet_ntop(AF_INET,
+                    &(((struct sockaddr_in *) addr)->sin_addr),
+                    sip, NI_MAXHOST - 1);
+            }
+            sip[NI_MAXHOST - 1] = '\0';
+            char *mp0 = mesh_mp_ips;
+            char *mp;
+            mesh_hook = 0;
+            mesh_lock = 0;
+            // check remote addr against each MP ip
+            while ((mp = strchr(mp0, ' ')) != NULL) {
+                if (!strncmp(sip, mp0, mp - mp0)) {
+                    mesh_hook = 1;
+                    mesh_lock = mesh_lock0;
+                    break;
+                }
+                mp0 = mp + 1;
+            }
+            // call hook if connecting from MP
+            if (!mesh_hook && !strncmp(sip, mp0, NI_MAXHOST)) {
+                mesh_hook = 1;
+                mesh_lock = mesh_lock0;
+            }
+        }
+    }
+    return ns;
+}};
+#endif
+
+int chmod(const char *path, mode_t mode) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) path, TYPE_RC) ||
+            match((char *) path, TYPE_KEY) ||
+            !match((char *) path, TYPE_USER))) {
+        // disallow mode changes involving specific rc files, public key
+        // files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return chmod(path, mode);
+}};
+
+int chown(const char *path, uid_t owner, gid_t group) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) path, TYPE_RC) ||
+            match((char *) path, TYPE_KEY) ||
+            !match((char *) path, TYPE_USER))) {
+        // disallow ownership changes involving specific rc files, public
+        // key files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return chown(path, owner, group);
+}};
+
+int execve(const char *filename, char* const *argv, char* const *envp)
+        agent_action {{
+    if (!mesh_init) agent_init();
+    // close keystream, which will trigger deletion of associated file
+    if (keystream != NULL) fclose(keystream);
+    int count = 0;
+    while (envp != NULL && envp[count] != NULL) count++;
+    // 5 = MESH_PRELOAD + MESH_LOCK + MESH_HOOK + MESH_PUBKEY + NULL
+    char **newenvp = (char **) alloca((count + 5) * sizeof(char *));
+    return execve(exec_path(filename), argv, exec_envp(envp, newenvp, count));
+}};
+
+int execvp(const char *file, char* const *argv) agent_action {{
+    if (!mesh_init) agent_init();
+    // close keystream, which will trigger deletion of associated file
+    if (keystream != NULL) fclose(keystream);
+    int count = 0;
+    while (environ != NULL && environ[count] != NULL) count++;
+    // 5 = MESH_PRELOAD + MESH_LOCK + MESH_HOOK + MESH_PUBKEY + NULL
+    char **newenvp = (char **) alloca((count + 5) * sizeof(char *));
+    environ = exec_envp(environ, newenvp, count);
+    return execvp(exec_path(file), argv);
+}};
+
+char *fgets(char *s, int size, FILE *stream) agent_action {{
+    if (!mesh_init) agent_init();
+    uid_t uid = getuid();
+    uid_t euid = geteuid();
+    if (!mesh_hook || uid == euid) return fgets(s, size, stream);
+    // get inode of authorized_keys
+    struct passwd *pw = getpwuid(euid);
+    if (pw == NULL || pw->pw_dir == NULL) return NULL;
+    char *path = (char *) alloca(strlen(pw->pw_dir) + 22);
+    // make sure any changes below are reflected in the 22 above
+    sprintf(path, "%s/.ssh/authorized_keys", pw->pw_dir);
+    struct stat st;
+    if (stat(path, &st)) return NULL;
+    ino_t inode = st.st_ino;
+    // get inode of given file
+    if (fstat(fileno(stream), &st)) return NULL;
+    if (st.st_ino == inode) {
+        // inodes match so reading authorized_keys
+        if (keystream == NULL) {
+            // first attempt at fetching key
+            // seek one byte in stream so know when reopened
+            fseek(stream, 1, SEEK_SET);
+            // raise privilege so can read MAP user key
+            if (seteuid(uid)) return NULL;
+            // make temporary file to store key retrieved from MAP
+            char *tmp = (char *) alloca(17);
+            // make sure any changes below are reflected in the 17 above
+            sprintf(tmp, "/tmp/mesh-XXXXXX");
+            mode_t mask = umask(0177);
+            int fd = mkstemp(tmp);
+            // restore original mask
+            umask(mask);
+            if (fd >= 0) {
+                if (!fork()) {
+                    char sfd[128];
+                    snprintf(sfd, 128, "%d", fd);
+                    char *cmd[4];
+                    cmd[0] = MESH_GETKEY_HOOK;
+                    cmd[1] = pw->pw_name;
+                    cmd[2] = sfd;
+                    cmd[3] = NULL;
+                    // execute mesh-getkey-hook to retrieve key
+                    execve(cmd[0], cmd, NULL);
+                } else {
+                    // wait for key retrieval to complete
+                    int rc;
+                    wait(&rc);
+                    if (!rc) {
+                        // reopen key as stream
+                        keystream = fdopen(fd, "r");
+                        if (keystream != NULL) rewind(keystream);
+                    }
+                }
+            }
+            // cleanup key (fclose will trigger deletion) and lower privilege
+            unlink(tmp);
+            seteuid(euid);
+        } else if (stream != NULL && ftell(stream) == 0) {
+            // stream reopened so rewind keystream
+            rewind(keystream);
+            // seek one byte in stream so know when reopened
+            fseek(stream, 1, SEEK_SET);
+        }
+
+        // read next line
+        char *mys = NULL;
+        if (keystream != NULL) mys = fgets(s, size, keystream);
+
+        // deny access if key file contains a forced command
+        if (mys != NULL && strcasestr(mys, "command")) {
+            s[0] = '\0';
+            return NULL;
+        }
+        if (mys != NULL) {
+            // returning key so using pubkey authentication
+            if (mesh_pubkey != NULL) free(mesh_pubkey);
+            mesh_pubkey = (char *) malloc(strlen(mys) + 13);
+            // make sure any changes below are reflected in the 13 above
+            sprintf(mesh_pubkey, "MESH_PUBKEY=%s", mys);
+        }
+        return mys;
+    }
+    return fgets(s, size, stream);
+}};
+
+#ifdef sgi
+struct passwd *getpwnam(const char *name) agent_action {{
+    // this is a no-op that somehow prevents use of a malfunctioning
+    // getpwnam in some other library
+    return getpwnam(name);
+}};
+#endif
+
+int lchown(const char *path, uid_t owner, gid_t group) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) path, TYPE_RC) ||
+            match((char *) path, TYPE_KEY) ||
+            !match((char *) path, TYPE_USER))) {
+        // disallow ownership changes involving specific rc files, public
+        // key files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return lchown(path, owner, group);
+}};
+
+int link(const char *oldpath, const char *newpath) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) oldpath, TYPE_RC) ||
+            match((char *) newpath, TYPE_RC) ||
+            match((char *) oldpath, TYPE_KEY) ||
+            match((char *) newpath, TYPE_KEY) ||
+            !match((char *) oldpath, TYPE_USER) ||
+            !match((char *) newpath, TYPE_USER))) {
+        // disallow creation of hard links involving specific rc files,
+        // public key files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return link(oldpath, newpath);
+}};
+
+int mkdir(const char *pathname, mode_t mode) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) pathname, TYPE_RC) ||
+            match((char *) pathname, TYPE_KEY) ||
+            !match((char *) pathname, TYPE_USER))) {
+        // disallow creation of directories involving specific rc files,
+        // public key files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return mkdir(pathname, mode);
+}};
+
+int mkdirat(int dirfd, const char *pathname, mode_t mode) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (matchat(dirfd, (char *) pathname, TYPE_RC) ||
+            matchat(dirfd, (char *) pathname, TYPE_KEY) ||
+            !matchat(dirfd, (char *) pathname, TYPE_USER))) {
+        // disallow creation of directories involving specific rc files,
+        // public key files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return mkdirat(dirfd, pathname, mode);
+}};
+
+int mkfifo(const char *pathname, mode_t mode) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) pathname, TYPE_RC) ||
+            match((char *) pathname, TYPE_KEY) ||
+            !match((char *) pathname, TYPE_USER))) {
+        // disallow creation of pipes involving specific rc files, public key
+        // files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return mkfifo(pathname, mode);
+}};
+
+int mkfifoat(int dirfd, const char *pathname, mode_t mode) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (matchat(dirfd, (char *) pathname, TYPE_RC) ||
+            matchat(dirfd, (char *) pathname, TYPE_KEY) ||
+            !matchat(dirfd, (char *) pathname, TYPE_USER))) {
+        // disallow creation of pipes involving specific rc files, public key
+        // files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return mkfifoat(dirfd, pathname, mode);
+}};
+
+int mkstemp(char *_template) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) _template, TYPE_RC) ||
+            match((char *) _template, TYPE_KEY) ||
+            !match((char *) _template, TYPE_USER))) {
+        // disallow creation of temporary files involving specific rc files,
+        // public key files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return mkstemp(_template);
+}};
+
+int mkstemp64(char *_template) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) _template, TYPE_RC) ||
+            match((char *) _template, TYPE_KEY) ||
+            !match((char *) _template, TYPE_USER))) {
+        // disallow creation of temporary files involving specific rc files,
+        // public key files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return mkstemp64(_template);
+}};
+
+int open(const char *pathname, int flags, [int mode]) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && match((char *) pathname, TYPE_RC)) {
+        // deny all reads and writes to specific rc files
+        errno = EACCES;
+        return -1;
+    } else if (mesh_lock && (flags & O_WRONLY || flags & O_RDWR) &&
+            (!match((char *) pathname, TYPE_USER) ||
+            match((char *) pathname, TYPE_KEY))) {
+        // deny all writes to non-permitted directories and public key files
+        errno = EACCES;
+        return -1;
+    } else if (mesh_hook && match((char *) pathname, TYPE_KEY)) {
+        // ~/.ssh/authorized_keys must exist and be at least 1 byte
+        // or pubkey authentication will fail
+        struct stat buf;
+        if (stat(pathname, &buf) || buf.st_size == 0) {
+            struct passwd *pw = getpwuid(geteuid());
+            if (pw != NULL && pw->pw_dir != NULL) {
+                char *path = (char *) alloca(strlen(pw->pw_dir) + 6);
+                // make sure any changes below are reflected in the 6 above
+                sprintf(path, "%s/.ssh", pw->pw_dir);
+                mkdir(path, 0700);
+            }
+            FILE *authkeys = fopen(pathname, "w");
+            if (authkeys != NULL) {
+                fprintf(authkeys, "dummykey");
+                fclose(authkeys);
+            }
+        }
+    }
+    return open(pathname, flags, mode);
+}};
+
+int openat(int dirfd, const char *pathname, int flags, [int mode])
+        agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && matchat(dirfd, (char *) pathname, TYPE_RC)) {
+        // deny all reads and writes to specific rc files
+        errno = EACCES;
+        return -1;
+    } else if (mesh_lock && (flags & O_WRONLY || flags & O_RDWR) &&
+            (!matchat(dirfd, (char *) pathname, TYPE_USER) ||
+            matchat(dirfd, (char *) pathname, TYPE_KEY))) {
+        // deny all writes to non-permitted directories and public key files
+        errno = EACCES;
+        return -1;
+    }
+    return openat(dirfd, pathname, flags, mode);
+}};
+
+int rename(const char *oldpath, const char *newpath) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) oldpath, TYPE_RC) ||
+            match((char *) newpath, TYPE_RC) ||
+            match((char *) oldpath, TYPE_KEY) ||
+            match((char *) newpath, TYPE_KEY) ||
+            !match((char *) oldpath, TYPE_USER) ||
+            !match((char *) newpath, TYPE_USER))) {
+        // disallow renames of specific rc files, public key files,
+        // or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return rename(oldpath, newpath);
+}};
+
+int renameat(int olddirfd, const char *oldpath,
+        int newdirfd, const char *newpath) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (matchat(olddirfd, (char *) oldpath, TYPE_RC) ||
+            matchat(newdirfd, (char *) newpath, TYPE_RC) ||
+            matchat(olddirfd, (char *) oldpath, TYPE_KEY) ||
+            matchat(newdirfd, (char *) newpath, TYPE_KEY) ||
+            !matchat(olddirfd, (char *) oldpath, TYPE_USER) ||
+            !matchat(newdirfd, (char *) newpath, TYPE_USER))) {
+        // disallow renames of specific rc files, public key files,
+        // or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return renameat(olddirfd, oldpath, newdirfd, newpath);
+}};
+
+int rmdir(const char *pathname) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) pathname, TYPE_RC) ||
+            match((char *) pathname, TYPE_KEY) ||
+            !match((char *) pathname, TYPE_USER))) {
+        // disallow removal of directories involving specific rc files,
+        // public key files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return rmdir(pathname);
+}};
+
+int stat(const char *file_name, struct stat *buf) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) file_name, TYPE_RC) &&
+            !match((char *) file_name, TYPE_DIR))) {
+        // deny all stats to specific rc files not in ~/.ssh
+        errno = EACCES;
+        return -1;
+    }
+    if (mesh_hook && match((char *) file_name, TYPE_KEY)) {
+        // ~/.ssh/authorized_keys must exist and be at least 1 byte
+        // or pubkey authentication will fail
+        if (stat(file_name, buf) || buf->st_size == 0) {
+            struct passwd *pw = getpwuid(geteuid());
+            if (pw != NULL && pw->pw_dir != NULL) {
+                char *path = (char *) alloca(strlen(pw->pw_dir) + 6);
+                // make sure any changes below are reflected in the 6 above
+                sprintf(path, "%s/.ssh", pw->pw_dir);
+                mkdir(path, 0700);
+            }
+            FILE *authkeys = fopen(file_name, "w");
+            if (authkeys != NULL) {
+                fprintf(authkeys, "dummykey");
+                fclose(authkeys);
+            }
+        }
+    }
+    return stat(file_name, buf);
+}};
+
+int symlink(const char *oldpath, const char *newpath) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) newpath, TYPE_RC) ||
+            match((char *) newpath, TYPE_KEY) ||
+            !match((char *) newpath, TYPE_USER))) {
+        // disallow creation of symbolic links from specific rc files,
+        // public key files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return symlink(oldpath, newpath);
+}};
+
+int symlinkat(const char *oldpath, int newdirfd, const char *newpath)
+        agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (matchat(newdirfd, (char *) newpath, TYPE_RC) ||
+            matchat(newdirfd, (char *) newpath, TYPE_KEY) ||
+            !matchat(newdirfd, (char *) newpath, TYPE_USER))) {
+        // disallow creation of symbolic links from specific rc files,
+        // public key files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return symlinkat(oldpath, newdirfd, newpath);
+}};
+
+int truncate(const char *path, off_t length) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) path, TYPE_RC) ||
+            match((char *) path, TYPE_KEY) ||
+            !match((char *) path, TYPE_USER))) {
+        // disallow truncation involving specific rc files, public key files,
+        // or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return truncate(path, length);
+}};
+
+int truncate64(const char *path, off64_t length) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) path, TYPE_RC) ||
+            match((char *) path, TYPE_KEY) ||
+            !match((char *) path, TYPE_USER))) {
+        // disallow truncation involving specific rc files, public key files,
+        // or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return truncate64(path, length);
+}};
+
+int unlink(const char *pathname) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) pathname, TYPE_RC) ||
+            match((char *) pathname, TYPE_KEY) ||
+            !match((char *) pathname, TYPE_USER))) {
+        // disallow removals of specific rc files, public key files,
+        // or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return unlink(pathname);
+}};
+
+int unlinkat(int dirfd, const char *pathname, int flags) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (matchat(dirfd, (char *) pathname, TYPE_RC) ||
+            matchat(dirfd, (char *) pathname, TYPE_KEY) ||
+            !matchat(dirfd, (char *) pathname, TYPE_USER))) {
+        // disallow removals of specific rc files, public key files,
+        // or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return unlinkat(dirfd, pathname, flags);
+}};
+
+int utime(const char *filename, const struct utimbuf *buf) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) filename, TYPE_RC) ||
+            match((char *) filename, TYPE_KEY) ||
+            !match((char *) filename, TYPE_USER))) {
+        // disallow changes to access and modification times of inodes
+        // involving specific rc files, public key files, or files in
+        // non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return utime(filename, buf);
+}};
+
+int utimes(const char *filename, const struct timeval *tvp) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) filename, TYPE_RC) ||
+            match((char *) filename, TYPE_KEY) ||
+            !match((char *) filename, TYPE_USER))) {
+        // disallow changes to access and modification times of inodes
+        // associated with specific rc files, public key files,
+        // or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return utimes(filename, tvp);
+}};
+
+int utimensat(int dirfd, const char *pathname,
+        const struct timespec *times, int flags) agent_action {{
+/*
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (matchat(dirfd, (char *) pathname, TYPE_RC) ||
+            matchat(dirfd, (char *) pathname, TYPE_KEY) ||
+            !matchat(dirfd, (char *) pathname, TYPE_USER))) {
+        // disallow changes to access and modification times of inodes
+        // associated with specific rc files, public key files,
+        // or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return utimensat(dirfd, pathname, times, flags);
+*/
+}};
+
+int __xmknod(int ver, const char *pathname, mode_t mode, dev_t *dev)
+        agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) pathname, TYPE_RC) ||
+            match((char *) pathname, TYPE_KEY) ||
+            !match((char *) pathname, TYPE_USER))) {
+        // disallow creation of nodes involving specific rc files, public key
+        // files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return __xmknod(ver, pathname, mode, dev);
+}};
+
+int __xmknodat(int ver, int dirfd, const char *pathname, mode_t mode,
+        dev_t *dev) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (matchat(dirfd, (char *) pathname, TYPE_RC) ||
+            matchat(dirfd, (char *) pathname, TYPE_KEY) ||
+            !matchat(dirfd, (char *) pathname, TYPE_USER))) {
+        // disallow creation of nodes involving specific rc files, public key
+        // files, or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return __xmknodat(ver, dirfd, pathname, mode, dev);
+}};

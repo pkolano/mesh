@@ -1,0 +1,759 @@
+Mashrc Configuration
+====================
+
+The mashrc file is located at "$PREFIX/etc/mesh/mashrc", where "$PREFIX"
+is the value of "--prefix" given to configure during installation.  This
+file specifies which commands may be executed on which hosts and under
+what conditions.
+
+1. Basic template
+
+    The basic template for the mashrc file is shown below.  Individual
+    elements are described in the following sections.
+
+        <mashrc>
+            <syslog>
+                <!-- enable logging with optional facility and priority -->
+            </syslog>
+            <parsers>
+                <!-- option parsing definitions and restrictions -->
+            </parsers>
+            <policies>
+                <policy_name>
+                    <!-- policy-level restrictions -->
+                    <proxies>
+                        <ssh>
+                            <!-- commands allowed to pass through to
+                                 another host via ssh -->
+                            <!-- proxy-level restrictions -->
+                            <commands>
+                                <command_name>
+                                    <!-- command-level restrictions -->
+                                </command_name>
+                                <!-- other command definitions -->
+                            </commands>
+                        </ssh>
+                        <none>
+                            <!-- commands allowed on localhost -->
+                        </none>
+                        <!-- other proxy definitions -->
+                    </proxies>
+                </policy_name>
+                <!-- other policy definitions -->
+            </policies>
+        </mashrc>
+
+
+2. Logging
+
+    Mash supports syslog logging of commands before and after execution.
+    This information can be used by the $PREFIX/sbin/mesh-logstats
+    command to display tables of Mesh usage statistics.  By default,
+    syslogging is disabled.  It can be enabled by adding a "syslog"
+    element:
+
+        <syslog/>
+
+    By default, messages will be generated to facility "user" with
+    priority "info".  This can be changed by adding "facility" and
+    "priority" elements.  For example:
+
+        <syslog>
+            <facility>local1</facility>
+            <priority>debug</priority>
+        </syslog>
+
+    enables syslog to facility "local1" with priority "debug".
+
+    Each invocation of Mash generates two log messages.  The first
+    message will be an "RCMD" message:
+
+        date mashhost mash[pid]: username srchost RCMD command args
+
+    This message shows the command line given by the user along with
+    the date, invoking user, and source host.  If the command is
+    successfully authorized, the second message will be an "EXEC"
+    message:
+
+        date mashhost mash[pid]: username srchost EXEC command args
+
+    This message is similar to an RCMD message except that it shows the
+    command line actually executed by Mash after any rewriting.  If
+    the command is not authorized, the second message will be an "EXIT"
+    message:
+
+        date mashhost mash[pid]: username srchost EXIT message
+
+    This message shows the reason why the command was not authorized in
+    the format returned to the user.
+
+
+3. Rules
+
+    Rules specify the set of conditions under which a command may
+    execute.  There are currently seven built-in rule types based on
+    argument values, connection parameters, environment settings,
+    invoking group, option values, and invoking user.
+
+    3.1. Argument rules
+
+        Argument rules place restrictions on the number and values of
+        command arguments.  They can also be used to dynamically modify
+        argument values.
+
+            <argument>
+                <!-- argument restrictions -->
+            </argument>
+
+        3.1.1. Count restrictions
+
+            A "count" element requires that the number of arguments
+            after option parsing (i.e. option-related arguments are not
+            included in the count), including the command path (i.e.
+            $0), be equal to a given value.  For example:
+
+                <count>2</count>
+
+            indicates that the number of arguments must be equal to 2.
+            In this case, "command arg1" would satisfy the restriction,
+            but "command", "command arg1 arg2", etc. would not.
+
+            An option "op" attribute may be added to the count element
+            for relational operations.  Supported op attribute values
+            are "le", "lt", "ge", and "gt".  For example:
+
+                <count op="le">2</count>
+
+            requires that the number of arguments be less than or equal
+            to 2.  In this case, "command" and "command arg1" would
+            satisfy the restriction, but "command arg1 arg2", etc.
+            would not.
+
+        3.1.2. Value restrictions
+
+            A "value" element requires that the value of a particular
+            argument (defined by the "index" attribute) be equal to a
+            given value.  Note that indices begin at 0, where index 0
+            is the command path.  For example:
+
+                <value index="1">foo</value>
+
+            requires that the argument at index 1 be equal to the
+            string "foo".  In this case, "command foo" would satisfy the
+            restriction, but "command foo1", "command afoo", etc. would
+            not.
+
+        3.1.3. Regex restrictions
+            
+            A "regex" element requires that the value of a particular
+            argument (defined by the "index" attribute) match a given
+            regular expression.  For example:
+
+                <regex index="1">^(foo|bar)$</regex>
+
+            requires that the argument at index 1 be either "foo" or
+            "bar".  In this case, "command foo" and "command bar" would
+            satisfy the restriction, but "command", "command foobar",
+            etc. would not.
+
+            In some cases, it is useful to check for a regular
+            expression across all arguments.  This model is supported
+            when an index attribute is not given.  All arguments are
+            joined by newlines and the regular expression uses the Perl
+            "s" modifier that treats the string as a single line.  Thus,
+            "^" matches the beginning of the first argument while "\n"
+            matches the beginning of all subsequent arguments.  For
+            example:
+
+                <regex>^(?!.*(\n|^)foo)</regex>
+
+            uses a zero-width negative look-ahead assertion to require
+            that no argument begin with "foo".
+
+        3.1.4. Insert actions
+
+            An "insert" element allows a given value to be inserted at
+            a particular index (defined by the "index" attribute")
+            within the argument list.  For example:
+
+                <insert index="1">foo</insert>
+
+            would insert an argument "foo" immediately following the
+            command name (which is located at index 0).
+
+        3.1.5. Replace actions
+
+            A "replace" element allows the value of a particular
+            argument (defined by the "index" attribute) to be changed
+            before execution.  A "regex" attribute defines what portion
+            of the argument value should be modified according to the
+            value of the replace element.  For example:
+
+                <replace index="1" regex="foo">bar</replace>
+
+            changes all occurrences of the term "foo" with the term
+            "bar" in the first argument.  Note that replacements are
+            only performed if the associated command is actually going
+            to execute (i.e. all other restrictions have been
+            satisfied).
+
+            If neither an index nor a regex attribute is given, the
+            entire argument list will be replaced with the given value
+            split on whitespace.  For example:
+
+                <replace>cmd arg1 arg2</replace>
+
+            would replace the existing argument list with the three
+            element list consisting of "cmd", "arg1", and "arg2".  One
+            use of this capability is to invalidate Mesh keys under
+            given conditions (e.g. command invoked from unexpected host)
+            when used with the value $PREFIX/bin/mesh-keykill (with your
+            particular install $PREFIX).
+
+    3.2. Connection rules
+
+        Connection rules place restrictions on the source/destination
+        IP addresses and ports of the SSH connection.
+
+            <connection>
+                <!-- connection restrictions -->
+            </connection>
+
+        3.2.1. Src_host restrictions
+
+            A "src_host" element requires that the source
+            fully-qualified host name for a given SSH connection be
+            equal to a given value.  For example:
+
+                <src_host>host1.example.com</src_host>
+
+            requires that the source host name be "host1.example.com".
+
+        3.2.2. Src_ip restrictions
+
+            A "src_ip" element requires that the source IP address for a
+            given SSH connection be equal to a given value.  For
+            example:
+
+                <src_ip>192.168.1.1</src_ip>
+
+            requires that the source IP address be "192.168.1.1".
+
+        3.2.3. Src_port restrictions
+
+            A "src_port" element requires that the source port for a
+            given SSH connection be equal to a given value.  For
+            example:
+
+                <src_port>1111</src_port>
+
+            requires that the source port be 1111.
+
+        3.2.4. Dst_host restrictions
+
+            A "dst_host" element requires that the destination
+            fully-qualified host name for a given SSH connection be
+            equal to a given value.  For example:
+
+                <dst_host>host2.example.com</dst_host>
+
+            requires that the destination host name be "host2.example.com".
+
+        3.2.5. Dst_ip restrictions
+
+            A "dst_ip" element requires that the destination IP address
+            for a given SSH connection be equal to a given value.  For
+            example:
+
+                <dst_ip>192.168.2.2</dst_ip>
+
+            requires that the destination IP address be "192.168.2.2".
+
+        3.2.6. Dst_port restrictions
+
+            A "dst_port" element requires that the destination port for
+            a given SSH connection be equal to a given value.  For
+            example:
+
+                <dst_port>2222</dst_port>
+
+            requires that the destination port be 2222.
+
+        3.2.7. Regex restrictions
+
+            To support complex connection restrictions, connection rules
+            support regular expressions.  A "regex" element restricts
+            one of "src_host", "src_ip", "src_port", "dst_host",
+            "dst_ip", or "dst_port" (given by the "name" attribute)
+            according to a particular regular expression.  For example:
+
+                <regex name="src_host">example.com$</regex>
+                <regex name="dst_host">example.com$</regex>
+                <regex name="src_ip">^192\.168\..*</regex>
+                <regex name="dst_ip">^172\.16\..*</regex>
+                <regex name="src_port">^5000\d$</regex>
+                <regex name="dst_port">^22$</regex>
+
+            requires that both the source and destination hosts be in
+            the example.com domain, the source IP address be on the
+            192.168.0.0 subnet, the destination IP address be on the
+            172.16.0.0 subnet, the source port be one of 50000, 50001,
+            ..., 50009, and the destination port be 22.
+
+    3.3. Environment rules
+
+        Environment rules place restrictions on the environment variable
+        settings.
+
+            <environment>
+                <!-- environment restrictions -->
+            </environment>
+
+        3.3.1 Set restrictions
+
+            A "set" element requires that a particular environment
+            variable be defined.  For example:
+
+                <set name="HOME"/>
+
+            requires that the "HOME" variable be defined.
+
+        3.3.1 Unset restrictions
+
+            An "unset" element requires that a particular environment
+            variable be undefined.  For example:
+
+                <unset name="LD_PRELOAD"/>
+
+            requires that the "LD_PRELOAD" variable be undefined.
+
+        3.3.1 Value restrictions
+
+            A "value" element requires that the value of a particular
+            environment variable be equal to a given value.  For
+            example:
+
+                <value name="TERM">xterm</value>
+
+            requires that the "TERM" variable have the value "xterm".
+
+        3.3.1 Regex restrictions
+
+            A "regex" element requires that the value of a particular
+            environment variable (defined by the "name" attribute)
+            match a given regular expression.  For example:
+
+                <regex name="PATH">/opt/\w+/bin</regex>
+
+            requires that the "PATH" variable contain a "bin" directory
+            of some subdirectory of "/opt".  In this case,
+            "PATH=/opt/foo/bin" would satisfy the restriction, but
+            "PATH=/opt/foo/bar/bin", "PATH=/home/bin", etc. would not.
+
+    3.4. Group rules
+
+        Group rules place restrictions on the group of the user invoking
+        the command.
+
+            <group>
+                <!-- group restrictions -->
+            </group>
+
+        3.4.1. Allow restrictions
+
+            An "allow" element requires that the primary group of the
+            invoking user be a member of a given set of groups.  For
+            example:
+
+                <allow>
+                    <group1/>
+                    <group2/>
+                </allow>
+
+            requires that the primary group of the invoking user is
+            either "group1" or "group2".
+
+        3.4.2. Deny restrictions
+
+            A "deny" element requires that the primary group of the
+            invoking user not be a member of a given set of groups.
+            For example:
+
+                <deny>
+                    <group3/>
+                    <group4/>
+                </deny>
+
+            requires that the primary group of the invoking user is
+            neither "group3" nor "group4".
+
+    3.5. Option rules
+
+        Option rules place restrictions on the existence and values of
+        command options.  They can also be used to dynamically modify
+        option values.
+
+            <option>
+                <!-- option restrictions -->
+            </option>
+
+        3.5.1. Set restrictions
+
+            A "set" element requires that a particular option
+            (specified by the "name" attribute) be defined.  For
+            example:
+
+                <set name="foo"/>
+
+            requires that the "foo" option be defined.
+
+        3.5.2. Unset restrictions
+
+            An "unset" element requires that a particular option
+            (specified by the "name" attribute) be undefined.  For
+            example:
+
+                <unset name="bar"/>
+
+            requires that the "bar" option be undefined.
+
+        3.5.3. Value restrictions
+
+            A "value" element requires that the value of a particular
+            option (specified by the "name" attribute) be equal to a
+            given value.  For example:
+
+                <value name="foo">bar</value>
+
+            requires that the value of the "foo" option be equal to "bar".
+
+        3.5.4. Regex restrictions
+
+            A "regex" element requires that the value of a particular
+            option (specified by the "name" attribute) match a given
+            regular expression.  For example:
+
+                <regex name="opt">^(foo|bar|)$</regex>
+
+            requires that the "opt" option be either "foo" or "bar".  In
+            this case, "command --opt=foo" and "command -opt=bar" would
+            satisfy the restriction, but "command", "command
+            --opt=foobar", etc. would not.
+
+            In some cases, it is useful to check for a regex across all
+            options.  This model is supported when a name attribute is
+            not given.  All option tuples of the form "option=value" are
+            joined by newlines and the regular expression uses the Perl
+            "s" modifier that treats the string as a single line.  Thus,
+            "^" matches the beginning of the first option while "\n"
+            matches the beginning of all subsequent options.  For
+            example:
+
+                <regex>^(?!.*(\n|^)[abcd])</regex>
+
+            uses a zero-width negative look-ahead assertion to require
+            that none of the options in the set {a, b, c, d} be
+            defined.
+
+        3.5.5. Force restrictions
+
+            A "force" element allows the value of a particular option
+            (specified by the "name" attribute) to be defined or
+            changed before execution.  For example:
+
+                <force name="time">7d</force>
+
+            forces the value of the "time" option to be "7d".  Note
+            that options are only forced if the associated command is
+            actually going to execute (i.e. all other restrictions have
+            been satisfied).
+
+    3.6. User rules
+
+        User rules place restrictions on the user invoking the
+        command.
+
+            <user>
+                <!-- user restrictions -->
+            </user>
+
+        3.6.1. Allow restrictions
+
+            An "allow" element requires that the invoking user be a
+            member of a given set of users.  For example:
+
+            <allow>
+                <user1/>
+                <user2/>
+            </allow>
+
+            requires that the invoking user be either "user1" or
+            "user2".
+
+        3.6.2. Deny restrictions
+
+            A "deny" element requires that the invoking user not be a
+            member of a given set of users.  For example:
+
+                <deny>
+                    <user3/>
+                    <user4/>
+                </deny>
+
+            requires that the invoking user be neither "user3" nor
+            "user4".
+
+4. Parsers
+
+    Parsers specify how each command is parsed and general restrictions
+    applicable to all instances of that command.  A parser is not
+    required for each command, but if not defined, corresponding command
+    definitions cannot use option restrictions and must operate on the
+    raw set of arguments (e.g. "command --foo arg1" would have three
+    arguments and not two arguments "command" and "arg1" and an option
+    "--foo").
+
+        <parsers>
+            <parser_name>
+                <!-- getopt definition -->
+                <!-- parser restrictions -->
+            </parser_name>
+            <!-- other parser definitions -->
+        </parsers>
+
+    4.1. Getopt definitions
+
+        The "getopt" element describes how the command line should be
+        parsed.  Namely, it defines which arguments should be considered
+        options and which should remain arguments.  For commands that
+        only use single letter options (e.g. "-a", "-b", etc.), Perl
+        Getopt::Std syntax can be used.  In this syntax, options without
+        values are listed as just the corresponding letter while options
+        with values are followed by a colon.  For example:
+
+            <getopt>abc:d:</getopt>
+
+        specifies that the command supports two non-value options "-a",
+        and "-b", and two value options "-c val" and "-d val".
+
+        For commands that use multi-letter options (e.g. "--foo",
+        "--bar", etc.), Perl Getopt::Long syntax must be used.  See the
+        Getopt::Long man page for details.  Note that Getopt::Long
+        option definitions must be separated by commas.  For example:
+
+            <getopt>a,b,float=f,int=i,string=s,f|flag</getopt>
+
+        specifies that the command supports three non-value options
+        "-a", "-b", and "-f" (which can also be specified as "--flag").
+        The command also supports a floating point option "--float"
+        (e.g. "--float=1.23"), an integer option "--int" (e.g.
+        "--int=1"), and a string option "--string" (e.g.
+        "--string=foobar").
+
+    4.2. Custom parsers
+
+        For commands that cannot be suitably parsed or restricted
+        using the built-in parsing mechanism, custom parsers may be
+        added to Mash using arbitrary Perl code.  A custom parser for a
+        command "mycommand" must be defined in a module
+        "Mash::Command::Mycommand" (i.e. the command name with the first
+        letter capitalized).  The module should inherit the methods of
+        "Mash::Command" and define a "parse" method.
+    
+        This method is responsible for parsing the command line,
+        authorizing and untainting the options and arguments, optionally
+        rewriting the options and/or arguments, and returning an array
+        reference suitable for execution by the "exec" function.  If
+        parsing fails or the command is not authorized, parse must
+        return "undef".  If parsing is successful and the command is
+        authorized, parse must return an array reference containing the
+        new ARGV to be executed.
+
+        The following shows an example of a custom parser for the "scp"
+        command.  Note that scp can be defined using the built-in
+        parsing mechanism (see "etc/mashrc.mp" for the definition).
+        The code is commented to explain the various requirements
+        discussed above.
+
+            package Mash::Command::Scp;
+
+            use strict;
+            use Getopt::Long qw(:config bundling no_ignore_case require_order);
+
+            use Mash::Command;
+
+            our @ISA = qw(Mash::Command);
+
+            sub parse {
+                my $self = shift;
+
+                # abort if first argument does not match name or path
+                return undef if (scalar(@ARGV) == 0 ||
+                    $ARGV[0] ne $self->{path} && $ARGV[0] ne $self->{name});
+                my @argv_save = @ARGV;
+                shift @ARGV;
+
+                # parse options
+                my %opts = ();
+                my $rc = GetOptions(\%opts,
+                    "d", "f", "p", "q", "r", "t", "v",
+                );
+                my @argv_new = @ARGV;
+                @ARGV = @argv_save;
+                # abort on parse error or if neither -f nor -t were given
+                return undef if (!$rc || !$opts{f} && !$opts{t} ||
+                    scalar(@argv_new) != 1);
+                return undef if (!$self->allow(\@argv_new, \%opts));
+
+                # rewrite command with absolute path
+                my $rewrite = [$self->{path}];
+                # add original options that are allowed
+                foreach ("d", "f", "p", "q", "r", "t", "v") {
+                    push(@{$rewrite}, "-$_") if ($opts{$_});
+                }
+                # untaint and add original non-option arguments
+                if ($argv_new[0] =~ /^([[:print:]]+)$/) {
+                    push(@{$rewrite}, $1);
+                    return $self->SUPER::map($rewrite, \@argv_new, \%opts);
+                }
+                return undef;
+            }
+
+            # end with a true value to indicate a successful module load
+            1;
+
+
+5. Policies
+
+    Policies specify which commands may be executed on which hosts and
+    under what conditions.
+
+        <policies>
+            <policy_name>
+                <!-- policy-level restrictions -->
+                <!-- proxies definition -->
+            </policy_name>
+            <!-- other policy definitions -->
+        </policies>
+
+    5.1. Proxies
+
+        Each policy must define one or more proxies that describe how a
+        command is executed on a particular host.  There are currently
+        two types of proxies available, but custom proxies may be
+        implemented if desired.  Any number of the same proxy type may
+        be used within a single "proxies" element.
+
+            <proxies>
+                <!-- proxy definitions -->
+            </proxies>
+
+        5.1.1. None
+
+            A "none" element specifies that no proxy will be used (i.e.
+            that the command will execute on the host on which Mash is
+            running).  A "commands" element specifies which commands may
+            execute on the local host and under what conditions.
+            
+                <none>
+                    <commands>
+                        <!-- command definitions -->
+                    </commands>
+                </none>
+
+        5.1.2. Ssh
+
+            An "ssh" element specifies that SSH will be used to execute
+            the command on a remote host.  This element requires a
+            "directory" element that specifies the path to the directory
+            containing the SSH client, a "port" element that specifies
+            the SSH port to be used on the remote host, and a "commands"
+            element that specifies which commands may execute on the
+            remote host.  Two optional elements "forward_agent" and
+            "forward_x11" can be specified to force forwarding of the
+            SSH agent and X11, respectively.  These options are disabled
+            by default.
+
+                <ssh>
+                    <directory>/base/dir/of/ssh/client</directory>
+                    <forward_agent/>
+                    <forward_x11/>
+                    <port>22</port>
+                    <commands>
+                        <!-- command definitions -->
+                    </commands>
+                </ssh>
+
+        5.1.3. Custom proxies
+
+            For proxies that use a mechanism other than SSH to relay
+            commands or perform other activities on remote hosts, custom
+            proxies may be added to Mash using arbitrary Perl code.  A
+            custom proxy "myproxy" must be defined in a module
+            "Mash::Proxy::Myproxy" (i.e. the proxy name with the first
+            letter capitalized).  The module should inherit the methods
+             of "Mash::Proxy" and define a "parse" method.  See
+            "$PREFIX/lib/Mash/Proxy/*.pm" for examples.
+            
+    5.2. Commands
+
+        The name of each command in the "commands" element of a proxy
+        corresponds to the name of an actual command (e.g. "ls" or
+        "echo") or the name of a parser defined within the top-level
+        "parsers" element.  Each command must define a "directory"
+        element that specifies the absolute directory containing the
+        command executable.
+        
+            <command_name>
+                <directory>/base/dir/of/command</directory>
+                <!-- command-level restrictions -->
+            </command_name>
+
+        If a parser name is used, then the command must parse correctly
+        and meet the restrictions of the parser in additional to any
+        other restrictions specified in the command definition.  Note
+        that command names must be valid XML element names.  Mashrc
+        parsing will fail if commands do not follow XML element
+        conventions (e.g. commands starting with a number).
+
+        The example command:
+
+            <echo>
+                <directory>/bin</directory>
+                <argument>
+                    <count>2</count>
+                    <value>foobar</value>
+                </argument>
+            </echo>
+        
+        would allow the command "/bin/echo foobar" to execute, but
+        would not allow "/usr/bin/echo foobar", "/bin/echo barfoo", etc.
+
+
+6. Errors
+
+    Mash only reports two types of errors by default.  A "Permission
+    denied (unauthorized command)" message indicates that the command
+    given by the user did not satisfy the conditions of any policy.  A
+    "Permission denied (key expired)" message indicates that the key
+    used for authentication is no longer valid (if Mash is deployed
+    within a full single sign-on environment -- see "INSTALL" for
+    details).  Additional error messages may be defined within the
+    mashrc file.
+
+    All rules may include an "error" element that defines a message to
+    be returned to the user in case that particular rule triggers a
+    failure.  In the case that a command is not authorized by any
+    policy, there may be many different rules that fail, thus many
+    different possible error messages to return.  For this reason, each
+    "error" element may include a "priority" attribute that defines the
+    relative priority of that message.  Only the highest priority
+    message will be returned to the user.  For example:
+
+        <error priority="99">this is an error message</error>
+
+    would print the message "Permission denied (this is an error
+    message)" if the restrictions of the rule in which this element was
+    contained were not satisfied and 99 was the greatest error message
+    priority amongst all rule failures.
+

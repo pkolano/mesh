@@ -1,0 +1,607 @@
+<html>
+  <head>
+    <title>Middleware using Existing SSH Hosts (Mesh)</title>
+  </head>
+  <body>
+Using Mesh without the Mesh client<br>
+<br>
+
+<hr>
+<b>Introduction</b>
+<br>
+<br>
+
+    The Mesh client is the <a href="usage.html">recommended approach to
+    using Mesh</a>.  The client requires Perl, however, thus may not be
+    suitable for all purposes.  The only software actually required to
+    use Mesh is SSH.  This page details the manual steps required to use
+    Mesh with only SSH.  Users should still review the <a
+    href="usage.html">client instructions</a> for a full overview of
+    Mesh.
+
+<br>
+<br>
+
+<hr>
+<b>Mesh Manual Usage Summary</b>
+<br>
+<br>
+
+    The steps below demonstrate how to get up and running with Mesh
+    without the client using a bbftp transfer to host1 as an example.
+    Consult the link in each step for full details (or simply read this
+    page to completion).
+
+    <ol>
+    <li><a href="#generation">Initialize a long-term key on map.example.com</a>
+        (one time)<br>
+    <pre>    ssh -x -oPubkeyAuthentication=no map.example.com \
+        mesh-keygen --init &lt;~/.ssh/authorized_keys</pre>
+    </li>
+
+    <li><a href="#generation">Generate a Mesh key</a>
+        (one time per week)<br>
+    <pre>    eval `ssh-agent`
+    ssh-add ~/.ssh/id_rsa
+    ssh -A -oPubkeyAuthentication=no mp.example.com \
+        mesh-keygen |tee ~/.ssh/meshkey`
+    ssh-agent -k</pre>
+    </li>
+
+    <li><a href="usage.html#execauth">Authorize host for Mesh operations</a>
+        (one time per host)<br>
+    <pre>    ssh host1
+    touch ~/.meshrc</pre>
+    </li>
+
+    <li><a href="usage.html#writeauth">Authorize directories for writes</a>
+        (one or more times per host)<br>
+    <pre>    ssh host1
+    echo /tmp >>~/.meshrc</pre>
+    </li>
+
+    <li><a href="#preparation">Prepare the Mesh key for use</a>
+        (one time per session)<br>
+    <pre>    eval `ssh-agent`
+    ssh-add -t 1w ~/.ssh/meshkey</pre>
+    </li>
+
+    <li><a href="#commands">Execute command</a>
+        (each time)<br>
+    <pre>    bbftp -L "ssh -Aqx -oBatchMode=yes mp.example.com ssh -q" \
+        -e "put /foo/bar /tmp/foobar" host1.example.com</pre>
+    </li>
+
+    <li><a href="#troubleshoot">Troubleshoot problems</a>
+        (as needed)<br>
+    </li>
+    </ol>
+
+    Executing commands on the resources of other organizations via
+    single sign-on requires some additional configuration.
+
+    <ol>
+    <li><a href="#vohome">Specify home MP/MAP</a>
+        (one time per organization)<br>
+    <pre>    ssh -oPubkeyAuthentication=no user1_vo2@mp.vo2.example.com mesh-setmp \
+        --home=user1@mp.example.com --homemap=user1@map.example.com</pre>
+    </li>
+
+    <li><a href="#voaway">Specify foreign MP(s)</a>
+        (optional one time per organization)<br>
+    <pre>    ssh -oPubkeyAuthentication=no user1@mp.example.com mesh-setmp \
+        --away=user1_vo2@mp.vo2.example.com</pre>
+    </li>
+
+    <li><a href="#vocommands">Execute command via foreign MP</a>
+        (each time)<br>
+    <pre>    bbftp -L "ssh -q `ssh -Aqx -oBatchMode=yes user1@mp.example.com \
+            mesh-getmp host2.vo2.example.com` ssh -q" \
+        -e "put /foo/bar /tmp/foobar" host2.vo2.example.com</pre>
+    </li>
+    </ol>
+
+<hr>
+<a name="generation"></a>
+<b>Mesh Key Generation</b>
+
+    <ol>
+    <li>
+
+        <b>On the very first use only</b>, invoke the "mesh-keygen"
+        command with the "--init" option on map.example.com to upload an
+        SSH authorized_keys file (used <i>only</i> during key generation
+        and revocation).  An authorized_keys file contains one or more
+        SSH public keys that allow the corresponding SSH private keys to
+        be used for authentication to a system.  The uploaded
+        authorized_keys file can be an existing file (such as your
+        ~/.ssh/authorized_keys file from any host) or one created
+        specifically for this purpose using a new SSH key pair generated
+        with ssh-keygen.  The public keys in this file must be in
+        OpenSSH format and must not contain any forced commands (i.e.
+        "command=").  For example, to upload an existing authorized_keys
+        file, the following can be invoked:
+
+        <br>
+        <pre>    ssh -x -oPubkeyAuthentication=no map.example.com \
+        mesh-keygen --init &lt;~/.ssh/authorized_keys</pre>
+
+        You will be prompted to authenticate.
+
+        <br>
+        <br>
+
+        Users who have never connected to map.example.com before
+        may need to add a "-oStrictHostKeyChecking=ask" option to the
+        scp command line.
+
+        <br>
+        <br>
+
+        Note that this is on map.example.com <i>only</i> and that you
+        must use the "-oPubkeyAuthentication=no" option as shown.  Users
+        outside the target Mesh domain may need to add an appropriate
+        SSH option to set their login name, such as "-l username".
+
+        <br>
+        <br>
+    </li>
+    <li>
+    
+        Start an SSH agent (or use one currently running):
+
+        <pre>    eval `ssh-agent -s` (if your shell is sh/bash)</pre>
+
+        or
+
+        <pre>    eval `ssh-agent -c` (if your shell is csh/tcsh)</pre>
+    </li>
+
+    <li>
+    
+        Add a private key corresponding to one of the public keys in
+        the authorized_keys file of step 1 to the agent (this is
+        unnecessary if an agent is already running with the key loaded).
+        For example:
+
+    <br>
+    <pre>    ssh-add ~/.ssh/id_rsa</pre>
+    </li>
+    <li>
+    
+        Invoke the "mesh-keygen" command on mp.example.com.  You will be
+        prompted to authenticate.  After successful authentication, the
+        mesh-keygen command prints a Mesh key to your terminal, which
+        should be saved to a file in a directory that is readable only
+        by you.  This key can be saved to a file by cut-and-paste,
+        redirecting standard output, or using the "tee" command.  For
+        example, to generate a key and redirect it into a file starting
+        with ~/.ssh/meshkey and labeled with the current time, the
+        following can be invoked:
+
+        <pre>    ssh -A -oPubkeyAuthentication=no mp.example.com \
+        mesh-keygen |tee ~/.ssh/meshkey.`date +%Y%m%d.%H%M`</pre>
+
+        Users who have never connected to mp.example.com before may
+        need to add a "-oStrictHostKeyChecking=ask" option to the SSH
+        command line.
+
+        <br>
+        <br>
+
+        Note that you must use the "-oPubkeyAuthentication=no" option as
+        shown.  Users outside the target Mesh domain may need to add
+        an appropriate SSH option to set their login name, such as "-l
+        username".	
+
+        <br>
+        <br>
+    </li>
+
+    <li>
+    
+        Protect your keys. In order to perform unattended operations,
+        Mesh keys cannot be encrypted, thus should always be protected
+        with appropriate file system permissions (i.e. 400 or 600).
+        Check the permissions of your key immediately after generation
+        and modify if necessary. You are responsible for the privacy of
+        your keys.
+        
+    </li>
+    </ol>
+
+<hr>
+<b>Mesh User Mappings</b>
+<br>
+<br>
+
+    <a name="vohome"></a><b>One time per organization</b>, for a user
+    user1 of VO1 with an account user1_vo2 in VO2 to use resources of
+    VO2, they must specify the home MP/MAP that should be used for
+    authentication on the VO2 MP:
+
+    <pre>    ssh -oPubkeyAuthentication=no user1_vo2@mp.vo2.example.com mesh-setmp \
+        --home=user1@mp.example.com --homemap=user1@map.example.com</pre>
+
+    This tells the MP/MAP of VO2 that any time user1_vo2 attempts to
+    authenticate, it will use any local Mesh keys and additionally
+    retrieve the keys for user1 from the MP/MAP of VO1.  This key
+    retrieval happens automatically.  Note that this command is only
+    effective if the administrator of VO2 has authorized keys from VO1
+    to be used for authentication.
+
+    <br>
+    <br>
+    
+    <a name="voaway"></a><b>Optionally one time per organization</b>,
+    the user can specify one or more foreign MPs on the home MP so
+    that the contact information for arbitrary hosts can be determined
+    solely through the home MP:
+
+    <pre>    ssh -oPubkeyAuthentication=no user1@mp.example.com mesh-setmp \
+        --away=user1_vo2@mp.vo2.example.com</pre>
+
+    This allows the home MP to determine the MP that should be used
+    for access to any local or foreign resource.
+    
+    <br>
+    <br>
+
+    <a name="vocommands"></a>Once fully configured, commands to any
+    resource can be invoked identically regardless of the VO in which
+    the resource is located:
+
+    <pre>    bbftp -L "ssh -q `ssh -Aqx -oBatchMode=yes user1@mp.example.com \
+            mesh-getmp host2.vo2.example.com` ssh -q" \
+        -e "put /foo/bar /tmp/foobar" host2.vo2.example.com</pre>
+
+    In this example, the resource "host2.vo2.example.com" could be
+    replaced with any resource in any configured VO and the command
+    would work properly without having to manually specify the exact
+    user name or MP associated with the resource (which will differ per
+    VO).  Note that the use of the mesh-getmp command is optional, but
+    if not used, then the user must specify the user name and MP
+    required to access the resource.
+
+    <br>
+    <br>
+
+<hr>
+<a name="management"></a>
+<b>Mesh Key Management</b>
+<br>
+<br>
+
+    Each invocation of mesh-keygen creates a new Mesh key that is valid
+    for one week from the time of generation.  Users may have multiple
+    keys at once that all expire at different times.  To facilitate the
+    management of multiple Mesh keys, the "mesh-keytime" and
+    "mesh-keykill" commands are available.
+
+    <br>
+    <br>
+    <b>Mesh-keytime</b>
+    <br>
+    <br>
+
+        To determine the expiration time of a Mesh key stored in a file
+        "/key/file", the following can be invoked:
+
+        <pre>    ssh -xi /key/file -oIdentitiesOnly=yes -oBatchMode=yes \
+        mp.example.com mesh-keytime</pre>
+
+        The key fingerprint and expiration time will be printed to
+        your terminal.
+
+    <br>
+    <br>
+    <b>Mesh-keykill</b>
+    <br>
+    <br>
+
+        To invalidate a specific Mesh key stored in a file "/key/file"
+        before its expiration time has passed, you must have an SSH
+        agent running with the same key you use to generate Mesh keys as
+        described in steps 2 and 3 of the <a href="#generation">Mesh Key
+        Generation</a> section.  After which, the following can be
+        invoked:
+
+        <pre>    ssh -Axi /key/file -oIdentitiesOnly=yes -oBatchMode=yes \
+		mp.example.com mesh-keykill</pre>
+
+        To invalidate all currently valid Mesh keys, the following can
+        be invoked:
+
+        <pre>    ssh -Ax -oPubkeyAuthentication=no mp.example.com mesh-keykill --all</pre>
+
+        In this case, you will be prompted to authenticate.
+
+    <br>
+    <br>
+
+<hr>
+<a name="preparation"></a>
+<b>Mesh Key Preparation</b>
+<br>
+<br>
+
+    For all operations, an SSH agent must be started with a Mesh key
+    loaded, which can be scripted as needed, because the key is
+    unencrypted.
+
+    <br>
+    <ol>
+    <li>
+    
+        Start an SSH agent: 
+
+        <pre>    eval `ssh-agent -s` (if your shell is sh/bash)</pre>
+        or
+        <pre>    eval `ssh-agent -c` (if your shell is csh/tcsh)</pre>
+    </li> 
+    <li>
+    
+        Add a Mesh key to the agent (this is the <i>only</i> key
+        required to perform unattended Mesh operations):
+
+        <pre>    ssh-add /key/file</pre>
+
+        Since Mesh keys have a lifetime of one week, the "-t" option
+        may be used to automatically remove the key from the agent after
+        a week has elapsed:
+
+        <pre>    ssh-add -t 1w /key/file</pre>
+
+        The will prevent a buildup of keys in the agent, which can cause
+        login failure as described in the <a href="#troubleshoot">Mesh
+        Troubleshooting</a> section.  Keys may be explicitly removed
+        from the agent using the following:
+
+        <pre>    ssh-keygen -y -f /key/file &gt;/key/file.pub
+    ssh-add -d /key/file</pre>
+    </li>
+    <li>
+    
+        Make sure agent forwarding and batch mode are enabled in your
+        SSH client.  The examples below include the appropriate options
+        to enable agent forwarding ("-A") and batch mode
+        ("-oBatchMode=yes").
+        
+    </li>
+    </ol>
+
+<hr>
+<a name="commands"></a>
+<b>Mesh Commands</b>
+<br>
+<br>
+
+    Examples of the use of each command that may be executed through
+    Mesh are given below.  Note that Mesh commands must be <a
+    href="usage.html#execauth">authorized for execution</a> on each target
+    host and transfers to a given host must be <a
+    href="usage.html#writeauth">authorized for writes</a>.
+
+    <br>
+    <ul>
+    <li>
+    <b>bbftp</b>
+        (<a href="http://doc.in2p3.fr/bbftp/3.2.0.bbftp.html">man page</a>)
+    <br>
+        <pre>    bbftp -L "ssh -Aqx -oBatchMode=yes mp.example.com ssh -q" \
+        -e "put /foo/bar /tmp/foobar" host1.example.com</pre>
+
+        Note that <b>you must use the fully-qualified domain name of
+        the target host</b> (in this case, example.com) if you are
+        not within the target Mesh domain.
+
+        <br>
+        <br>
+    </li>
+
+    <li>
+    <b>qstat</b>
+        (<a href="http://linux.die.net/man/1/qstat">man page</a>)
+    <br>
+        <pre>    ssh -Aqx -oBatchMode=yes mp.example.com ssh -q host1 qstat @pbs1</pre>
+    </li>
+	
+    <li>
+    <b>rsync</b>
+        (<a href="http://www.samba.org/ftp/rsync/rsync.html">man page</a>)
+    <br>
+        <pre>    rsync -e "ssh -Aqx -oBatchMode=yes mp.example.com ssh -q" \
+        foobar host1:/tmp</pre>
+		
+        Note that even if your home directory has been <a
+        href="usage.html#writeauth">authorized for writes</a>, <b>rsync
+        transfers to your home directory will fail unless the "-T" or
+        "--temp-dir" option is specified</b>.  This is because rsync
+        uses temporary files starting with "." during transfers, which
+        cannot be written in your home directory.  By specifying an
+        alternate temporary directory that is <a
+        href="usage.html#writeauth">authorized for writes</a>, this
+        problem can be avoided.  For example, the following uses /tmp as
+        the temporary directory when files are transferred to the home
+        directory.  Make sure that the temporary directory specified has
+        enough space for the files being transferred.
+
+        <pre>    rsync -T /tmp -e "ssh -Aqx -oBatchMode=yes mp.example.com ssh -q" \
+        foobar host1:</pre>
+    </li>
+
+    <li>
+    <b>scp</b>
+        (<a href="http://www.openbsd.org/cgi-bin/man.cgi?query=scp&sektion=1">man page</a>)
+    <br>
+    <br>
+    <ol>
+    <li>Create a file (for example, "meshwrap") containing the following:
+        <pre>   #!/bin/sh
+    exec ssh -Aqx -oBatchMode=yes mp.example.com ssh -q $@</pre>
+    </li>
+
+    <li>Make the created file executable:
+        <pre>    chmod 700 meshwrap</pre>
+    </li>
+
+    <li>Initiate the transfer. For example:
+        <pre>    scp -S ./meshwrap foobar host1:/tmp</pre>
+    </li>
+    </ol>
+    </li>
+
+    <li>
+    <b>sftp</b>
+        (<a href="http://www.openbsd.org/cgi-bin/man.cgi?query=sftp&sektion=1">man page</a>)
+    <br>
+    <br>
+    <ol>
+    <li>Create a file (for example, "meshwrap") containing the following:
+        <pre>    #!/bin/sh
+ 	exec ssh -Aqx -oBatchMode=yes mp.example.com ssh -q $@</pre>
+
+        Note that this file is identical to the one described for scp.
+
+        <br>
+        <br>
+    </li>
+			
+    <li>Make the created file executable:
+        <pre>    chmod 700 meshwrap</pre>
+    </li>
+
+    <li>Initiate the transfer.  For example:
+        <pre>    sftp -S ./meshwrap host1</pre>
+    </li>
+    </ol>			
+    </li>
+
+    <li>
+    <b>test</b>
+        (<a href="http://www.openbsd.org/cgi-bin/man.cgi?query=test&sektion=1">man page</a>)
+    <br>
+        <pre>    ssh -Aqx -oBatchMode=yes mp.example.com ssh -q host1 test -f /tmp/foobar</pre>
+    </li>
+    </ul>
+
+<hr>
+<a name="troubleshoot"></a>
+<b>Mesh Troubleshooting</b>
+<br>
+<br>
+
+    The following error messages may be encountered during Mesh usage.
+
+    <br>
+    <ul>
+    <li>"WARNING: Your password has expired"
+    <br>
+    <br>
+
+        This message indicates that your current password has expired
+        and must be changed.
+
+        <br>
+        <br>
+    </li>
+
+    <li>"Permission denied (~/.meshrc not found)"
+    <br>
+    <br>
+
+        This message indicates that you have not created a .meshrc file
+        in your home directory on the target host.  Mesh commands must
+        be <a href="usage.html#execauth">authorized for execution</a> on
+        each target host.
+
+        <br>
+        <br>
+    </li>
+
+    <li>"Permission denied (key expired)"
+    <br>
+    <br>
+
+        Mesh keys are only valid for one week from the time of
+        generation. This message indicates that the Mesh key used for
+        authentication has expired and is no longer valid.  You must
+        generate a new Mesh key or use a different Mesh key before
+        attempting another operation.
+        
+        <br>
+        <br>
+    </li>
+
+    <li>"Permission denied (publickey,keyboard-interactive)"
+    <br>
+    <br>
+
+        This message indicates that you have not provided the
+        appropriate authentication credentials to the MP.  There may
+        be several causes:
+
+        <br>
+        <br>
+        <ul>
+
+        <li>If you are generating a Mesh key and also receive an "Error
+        copying key..." message, you have not loaded a private key into
+        your SSH agent corresponding to one of the public keys in the
+        authorized_keys file uploaded to map.example.com in steps 1-3
+        of the <a href="#generation">Mesh Key Generation</a> section. You
+        can verify that the correct key is loaded by running "ssh-keygen
+        -l -f uploaded_key_file" and "ssh-agent -l" and checking that
+        the fingerprint of your uploaded key file has been loaded into
+        your SSH agent.</li>
+
+        <br>
+
+        <li>If you have specified -oBatchMode=yes on the command line, a
+        valid Mesh key may not been loaded into your SSH agent.  There
+        may also be too many keys loaded into your agent.  SSH tries
+        each key in the agent sequentially, so a valid key may still
+        fail if it was added to the agent after a number of invalid keys
+        greater than or equal to the login attempt limit.  Check the
+        number of keys in the agent using "ssh -l".  The agent may be
+        cleared of keys using "ssh-add -D".</li>
+
+        <br>
+
+        <li>If you have specified -oPubkeyAuthentication=no, you have
+       not provided valid authentication credentials.</li>
+
+        </ul>
+    </li>
+
+    <br>
+    <li>"Permission denied (unauthorized command)"
+    <br>
+    <br>
+
+        This message indicates that you have attempted an operation that
+        is not currently authorized by your Mesh installation.  Check
+        that the command line is valid and that the attempted command is
+        one of the <a href="#commands">authorized commands</a>.  Certain
+        options to <a href="#commands">authorized commands</a> may also
+        be disallowed, but these should never be needed in standard
+        usage scenarios.
+    
+        <br>
+        <br>
+    </li>
+
+    <li>Permission denied during file access (various forms)
+    <br>
+    <br>
+
+        These messages indicate that you attempted to read or write a
+        file for which such access is not allowed.  The most common
+        cause is forgetting to <a href="usage.html#writeauth">authorize
+        directories for writes</a>.  Reads and writes of ~/.* are never
+        permitted.
+
+    </li>
+    </ul>
+  </body>
+</html>

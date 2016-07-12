@@ -1,0 +1,254 @@
+#!/usr/bin/perl -T
+#
+# Copyright (C) 2006-2009 United States Government as represented by the
+# Administrator of the National Aeronautics and Space Administration
+# (NASA).  All Rights Reserved.
+#
+# This software is distributed under the NASA Open Source Agreement
+# (NOSA), version 1.3.  The NOSA has been approved by the Open Source
+# Initiative.  See http://www.opensource.org/licenses/nasa1.3.php
+# for the complete NOSA document.
+#
+# THE SUBJECT SOFTWARE IS PROVIDED "AS IS" WITHOUT ANY WARRANTY OF ANY
+# KIND, EITHER EXPRESSED, IMPLIED, OR STATUTORY, INCLUDING, BUT NOT
+# LIMITED TO, ANY WARRANTY THAT THE SUBJECT SOFTWARE WILL CONFORM TO
+# SPECIFICATIONS, ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR
+# A PARTICULAR PURPOSE, OR FREEDOM FROM INFRINGEMENT, ANY WARRANTY THAT
+# THE SUBJECT SOFTWARE WILL BE ERROR FREE, OR ANY WARRANTY THAT
+# DOCUMENTATION, IF PROVIDED, WILL CONFORM TO THE SUBJECT SOFTWARE. THIS
+# AGREEMENT DOES NOT, IN ANY MANNER, CONSTITUTE AN ENDORSEMENT BY
+# GOVERNMENT AGENCY OR ANY PRIOR RECIPIENT OF ANY RESULTS, RESULTING
+# DESIGNS, HARDWARE, SOFTWARE PRODUCTS OR ANY OTHER APPLICATIONS RESULTING
+# FROM USE OF THE SUBJECT SOFTWARE.  FURTHER, GOVERNMENT AGENCY DISCLAIMS
+# ALL WARRANTIES AND LIABILITIES REGARDING THIRD-PARTY SOFTWARE, IF
+# PRESENT IN THE ORIGINAL SOFTWARE, AND DISTRIBUTES IT "AS IS".
+#
+# RECIPIENT AGREES TO WAIVE ANY AND ALL CLAIMS AGAINST THE UNITED STATES
+# GOVERNMENT, ITS CONTRACTORS AND SUBCONTRACTORS, AS WELL AS ANY PRIOR
+# RECIPIENT.  IF RECIPIENT'S USE OF THE SUBJECT SOFTWARE RESULTS IN ANY
+# LIABILITIES, DEMANDS, DAMAGES, EXPENSES OR LOSSES ARISING FROM SUCH USE,
+# INCLUDING ANY DAMAGES FROM PRODUCTS BASED ON, OR RESULTING FROM,
+# RECIPIENT'S USE OF THE SUBJECT SOFTWARE, RECIPIENT SHALL INDEMNIFY AND
+# HOLD HARMLESS THE UNITED STATES GOVERNMENT, ITS CONTRACTORS AND
+# SUBCONTRACTORS, AS WELL AS ANY PRIOR RECIPIENT, TO THE EXTENT PERMITTED
+# BY LAW.  RECIPIENT'S SOLE REMEDY FOR ANY SUCH MATTER SHALL BE THE
+# IMMEDIATE, UNILATERAL TERMINATION OF THIS AGREEMENT.
+#
+
+# This program is a restricted shell that is invoked on resources by the
+# MIA in place of the user's normal login shell.  It will only execute
+# commands authorized by the administrator and not deauthorized by the
+# user.  For additional security, relative paths and most metacharacters
+# are disallowed.  The global meshrc file defines write and execute
+# authorizations that are applicable to all users.  User meshrc files
+# define write authorizations and execute deauthorizations applicable
+# to each individual user.
+
+use strict;
+use vars qw($VERSION);
+use File::Basename;
+use Getopt::Long;
+use Getopt::Std;
+use POSIX;
+use Text::ParseWords;
+
+my $glob;
+BEGIN {
+    if (eval "require File::Glob") {
+        # recent versions of perl will use the standard File::Glob,
+        eval "use File::Glob qw(:glob)";
+        $glob = \&bsd_glob;
+    } elsif (eval "require File::BSDGlob") {
+        # older versions of perl must have File::BSDGlob
+        eval "use File::BSDGlob qw(:glob)";
+        $glob = \&glob;
+    } else {
+        die;
+    }
+}
+
+# do not add "our" here as it's not supported in perl 5.0
+$VERSION = 0.27;
+
+my $meshrc = "/etc/mesh/meshrc";
+
+Getopt::Long::Configure('bundling', 'no_ignore_case', 'require_order');
+
+# parse and untaint arguments
+exit 1 if (scalar(@ARGV) != 2 || $ARGV[0] ne '-c');
+@ARGV = shellwords($ARGV[1]);
+my $argv_new = [];
+my @batch = ();
+foreach (@ARGV) {
+    if ($_ eq ';') {
+        # support operations batched with semi-colon
+        push(@batch, $argv_new);
+        $argv_new = [];
+    } else {
+        # expand globbed pathnames
+        my @glob = &{$glob}($_,
+            GLOB_BRACE | GLOB_NOCHECK | GLOB_QUOTE | GLOB_TILDE);
+        exit 1 if (scalar(@glob) == 0);
+        foreach (@glob) {
+            # older perls don't support [:print:] so use isprint instead
+            if (isprint $_ && /(.+)/) {
+                push(@{$argv_new}, $1);
+            } else {
+                exit 1;
+            }
+        }
+    }
+}
+push(@batch, $argv_new);
+
+# read in global meshrc rules
+my @grules = ();
+if (open(MESHRC, "<$meshrc")) {
+    while (<MESHRC>) {
+        s/^\s+|\s+$//g;
+        push(@grules, $_) if ($_ && !/^#/);
+    }
+    close MESHRC;
+}
+
+# read in user meshrc rules
+my @urules = ();
+if (open(MESHRC, "<" . (getpwuid($<))[7] . "/.meshrc")) {
+    while (<MESHRC>) {
+        s/^\s+|\s+$//g;
+        push(@urules, $_) if ($_ && !/^#/);
+    }
+    close MESHRC;
+} else {
+    # fail-safe default of no access if ~/.meshrc does not exist
+    print STDERR "Permission denied (~/.meshrc not found)\n";
+    exit 1;
+}
+
+# set minimal path
+my @paths = ("/bin", "/usr/bin");
+$ENV{PATH} = join(":", @paths);
+
+# exec each command in batch separately
+my $count = scalar(@batch);
+foreach $argv_new (@batch) {
+    --$count;
+    # prepend absolute prefix if relative path
+    if ($argv_new->[0] !~ /^\//) {
+        foreach (@paths) {
+            if (-x "$_/" . $argv_new->[0]) {
+                $argv_new->[0] =~ s/^/$_\//;
+                last;
+            }
+        }
+    }
+    my $prog = $argv_new->[0];
+    # command must be authorized by global rule
+    if (grep(/^\+x\s+\Q$prog\E$/, @grules) &&
+            # command must not be deauthorized by user rule
+            !grep(/^-x\s+\Q$prog\E$/, @urules) &&
+            # any extended rules must be satisfied
+            xrule($argv_new, \@grules, \@urules)) {
+        # use system for batch, exec otherwise to decrease resource usage
+        $count ? system {$prog} @{$argv_new} : exec {$prog} @{$argv_new};
+    } else {
+        $? = 1;
+    }
+}
+exit $?;
+
+# return true if given path is writable and not home directory
+# (only works with mesh_agent.so loaded in lock mode)
+sub w {
+    my $path = shift;
+    return 0 if (!defined $path);
+    my $dir = (-d $path ? $path : dirname($path));
+    # use dot so home directory will always return false
+    my $tmp = "$dir/." . basename(tmpnam());
+    if (open(TMP, ">$tmp")) {
+        close TMP;
+        unlink $tmp;
+        return 1;
+    } else {
+        return 0;
+    }
+}
+
+# shorthand for $ARGV[$index] for use in extended rules
+sub a {
+    my $index = shift;
+    return (defined $index ? $ARGV[$index] : scalar(@ARGV));
+}
+
+# options filled in from global extended rule option specification
+my %opts;
+# shorthand for $opts{$key} for use in extended rules
+sub o {
+    my $key = shift;
+    return $opts{$key};
+}
+
+# list of parameters filled in from user extended rules
+my @rc;
+# shorthand for $rc[$index] for use in extended rules
+sub rc {
+    my $index = shift;
+    return $rc[$index];
+}
+
+# return true if given arguments satisfy given global extended rules and
+# given user extended rules
+sub xrule {
+    @ARGV = @{$_[0]};
+    my @grules = @{$_[1]};
+    my @urules = @{$_[2]};
+
+    my $base = basename($ARGV[0]);
+    shift @ARGV;
+    # extract global extended rules for given command
+    @grules = grep(/^\+\Q$base\E\s+(.*)/, @grules);
+    # return 1 if no global rules apply
+    return 1 if (!@grules);
+
+    # extract user extended rules for given command
+    @urules = grep(/^\+\Q$base\E\s+(.*)/, @urules);
+    @urules = ("") if (scalar(@urules) == 0);
+    foreach my $grule (@grules) {
+        my ($cmd, $opt, $eval) = shellwords($grule);
+        if (!defined $eval) {
+            $eval = $opt;
+        } else {
+            if ($opt =~ /[,=|!+]/) {
+                # use Getopt::Long parsing if option specification
+                # contains items specific to Getopt::Long
+                GetOptions(\%opts, split(/,/, $opt)) or return 0;
+            } else {
+                # use Getopt::Std parsing otherwise
+                getopts($opt, \%opts) or return 0;
+            }
+        }
+        # untaint eval
+        $eval = $1 if ($eval =~ /(.*)/);
+        # allow shorthand (i.e. no quotes required) for alphanumeric options
+        $eval =~ s/o\((\w+)\)/o("$1")/g;
+        # check for user extended rule arguments
+        foreach my $urule (@urules) {
+            # rc is array of arguments specified in user extended rule
+            @rc  = shellwords($urule);
+            shift @rc ;
+            # untaint rc
+            for (my $i = 0; $i < scalar(@rc); $i++) {
+                if ($rc[$i] =~ /^([\w.\-\/]+)$/) {
+                    $rc[$i] = $1;
+                } else {
+                    return 0;
+                }
+            }
+            # return 1 on successful eval
+            return 1 if (eval $eval);
+        }
+    }
+    # return 0 if no global/user rule pairs evaluate successfully
+    return 0;
+}
+

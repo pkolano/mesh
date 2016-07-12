@@ -1,0 +1,136 @@
+#!/usr/bin/perl
+
+use strict;
+use Getopt::Long;
+
+our $VERSION = 0.21;
+
+Getopt::Long::Configure(qw(bundling no_ignore_case require_order));
+my %opts = (
+    group => "mesh",
+    prefix => "/usr/local",
+);
+$opts{help} = 1 if (scalar(@ARGV) == 0);
+exit 1 if !GetOptions(\%opts, qw(
+    disable-sso
+    group=s
+    help
+    prefix=s
+    type=s
+));
+if ($opts{help}) {
+    print "'configure' configures Mesh for different environments\n";
+    print "\n";
+    print "Usage: $0 [OPTION]...\n";
+    print "\n";
+    print "Defaults for the options are specified in brackets.\n";
+    print "\n";
+    print "Configuration:\n";
+    print "  --help             display this help and exit\n";
+    print "  --prefix=DIR       Mesh installation directory [$opts{prefix}]\n";
+    print "\n";
+    print "  For an MP install:\n";
+    print "    --type=mp        prepare installation for designated MP host\n";
+    print "    --group=GROUP    designated Mesh group on MP host [$opts{group}]\n";
+    print "\n";
+    print "  For an SSO-disabled MP (i.e. Mash) install:\n";
+    print "    --type=mp        prepare installation for designated MP host\n";
+    print "    --disable-sso    disable single sign-on functionality\n";
+    print "\n";
+    print "  For a MAP install:\n";
+    print "    --type=map       prepare installation for designated MAP host\n";
+    print "    --group=GROUP    designated Mesh group on MAP host [$opts{group}]\n";
+    print "\n";
+    print "  For a resource install:\n";
+    print "    --type=resource  prepare installation for target resource\n";
+    print "\n";
+    print "  For an SSO-disabled resource (i.e. Mess) install:\n";
+    print "    --type=resource  prepare installation for target resource\n";
+    print "    --disable-sso    disable single sign-on functionality\n";
+    print "\n";
+    print "Report bugs to <paul.kolano\@nasa.gov>\n";
+    exit 0;
+}
+if ($opts{type} !~ /^(mp|map|resource)$/) {
+    die "*** ERROR: You must specify a valid type\n";
+}
+if (! -f "etc/mesh.conf.in") {
+    die "*** ERROR: Unable to find etc/mesh.conf.in\n";
+}
+
+open(IN, "etc/mesh.conf.in");
+open(OUT, ">etc/mesh.conf");
+while (<IN>) {
+    if ($opts{prefix} ne '/usr/local' && /prefix_dir/) {
+        s/.*/prefix_dir $opts{prefix}/;
+    } elsif ($opts{group} ne 'mesh' && /mesh_group/) {
+        s/.*/mesh_group $opts{group}/;
+    } elsif (/self_type/) {
+        s/.*/self_type $opts{type}/;
+    }
+    print OUT $_;
+}
+close OUT;
+close IN;
+
+$opts{prefix} =~ s/\/*$/\//;
+$opts{type} = "mash" if ($opts{"disable-sso"} && $opts{type} eq "mp");
+$opts{type} = "mess" if ($opts{"disable-sso"} && $opts{type} eq "resource");
+
+print "configuring Mesh for " . $opts{type} . " installation...\n";
+while (my ($key, $val) = each %opts) {
+    print "using $key = $val\n";
+}
+
+my $error = 0;
+if ($opts{type} =~ /mp|map|mash/) {
+    my @mods = qw(Tie::IxHash XML::Simple);
+    if ($opts{type} ne "mash") {
+        push(@mods, qw(Date::Parse Net::Netmask Text::Table));
+    }
+    foreach my $mod (@mods) {
+        print "checking for $mod...";
+        if (!system("perl -M$mod -e '1' 2>/dev/null")) {
+            print "yes\n";
+        } else {
+            print "no\n";
+            print "*** ERROR: Can't find $mod\n";
+            $error = 1;
+        }
+    }
+}
+
+# must use File::BSDGlob in older versions without File::Glob
+print "checking for File::Glob...";
+if (!system("perl -MFile::Glob -e '1' 2>/dev/null")) {
+        print "yes\n";
+} else {
+    print "no\n";
+    print "checking for File::BSDGlob...";
+    if (!system("perl -MFile::BSDGlob -e '1' 2>/dev/null")) {
+        print "yes\n";
+    } else {
+        print "no\n";
+        print "*** ERROR: File::Glob or File::BSDGlob required\n";
+        $error = 1;
+    }
+}
+
+if ($opts{type} ne 'mash') {
+    $ENV{PREFIX} = $opts{prefix};
+    $error = 1 if (system("cd ../bypass; ./configure"));
+    $error = 1 if (system("cd bypass; ./configure"));
+}
+
+if ($error) {
+    print "configuration failed...check output for errors\n";
+    exit 1;
+} else {
+    print "configuration succeeded...creating Makefile.config\n";
+    open(FILE, ">Makefile.config");
+    while (my ($key, $val) = each %opts) {
+        print FILE uc($key) . "=" . $val . "\n";
+    }
+    close FILE;
+}
+

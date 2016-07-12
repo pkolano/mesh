@@ -1,0 +1,516 @@
+<html>
+  <head>
+    <title>Middleware using Existing SSH Hosts (Mesh)</title>
+  </head>
+  <body>
+Using Mesh<br>
+<br>
+
+<hr>
+<b>Mesh Usage Summary</b>
+<br>
+<br>
+
+    The steps below demonstrate how to quickly get up and running with
+    Mesh using an scp transfer to host1 as an example.  Consult the
+    link in each step for full details (or simply read this page to
+    completion).
+
+    <ol>
+    <li><a href="#client">Download and install client</a>
+        (one time)<br>
+        <pre>    wget http://www.example.com/mc
+    chmod 700 mc
+    mv mc ~/bin</pre>
+    </li>
+
+    <li><a href="#execauth">Authorize host for Mesh operations</a>
+        (one time per host)<br>
+        <pre>    ssh host1
+    touch ~/.meshrc</pre>
+    </li>
+
+    <li><a href="#writeauth">Authorize directories for writes</a>
+        (one or more times per host)<br>
+        <pre>    ssh host1
+    echo /tmp >>~/.meshrc</pre>
+    </li>
+
+    <li><a href="#commands">Execute command</a>
+        (each time)<br>
+        <pre>    mc scp foobar host1:/tmp/c_foobar</pre>
+    </li>
+
+    <li><a href="#output">Examine expected output</a>
+        (as needed)<br>
+        <br>
+    </li>
+
+    <li><a href="#troubleshoot">Troubleshoot problems</a>
+        (as needed)<br>
+    </li>
+    </ol>
+
+<hr>
+<a name="client"></a>
+<b>Mesh Client</b>
+<br>
+<br>
+
+    The Mesh client performs all the steps necessary to execute commands
+    through the Mesh Proxy (MP) as if the MP itself did not exist.
+    Commands that are allowed to pass through the MP can be executed as
+    if the remote host were directly connected by simply prepending the
+    client command "mc".  Besides executing remote commands, the client
+    also includes an <a href="usage_advanced.html">OS-independent virtual
+    file system</a> that allows files across all Mesh-enabled resources
+    to be accessed using standard file system commands.
+
+    <ul>
+    <li>Requirements
+    <br>
+    <br>
+
+        The client <b>requires Perl version 5.6.1 or above</b> to
+        execute and has been tested successfully on Linux, OS X, and
+        Windows under <a href="http://www.cygwin.com">Cygwin</a> and <a
+        href="http://www.colinux.org">coLinux</a>.  Only SSH is required
+        to use Mesh, however, so if these requirements cannot be met,
+        it is possible to <a href="usage_noclient.html">use Mesh
+        without the client</a>.  Note for Windows users, even if the
+        client is not used, scp and sftp require functionality only
+        found in the OpenSSH versions of these commands so <a
+        href="http://www.cygwin.com">Cygwin</a> or <a
+        href="http://www.colinux.org">coLinux</a> will still be needed.
+
+        <br>
+        <br>
+    </li>
+
+    <li>Installation
+    <br>
+    <br>
+        <ol>
+        <li><a href="http://www.example.com/mc">Download the client</a>
+        and save to a file called "mc"
+        <br>
+        <br>
+        </li>
+
+        <li>Make the client executable using "chmod 700 mc"
+        <br>
+        <br>
+        </li>
+
+        <li>Move the client to a location in your $PATH
+        <br>
+        <br>
+        </li>
+
+        </ol>
+    </li>
+
+    <li><a name="sshconf"></a>SSH Configuration
+    <br>
+    <br>
+
+        If your local user name differs from your user name in the
+        target Mesh domain, it is recommended that the following be
+        added to your ~/.ssh/config file, where "mesh_user_name"
+        should be replaced with your user name within that domain:
+
+            <pre>       Host mp.example.com map.example.com
+            User mesh_user_name</pre>
+
+        Alternatively, the client's -u option can be used as described
+        in the next section.  If your local user name is the same as
+        your user name within the target Mesh domain, no additional
+        configuration or command-line options are required.
+
+        <br>
+        <br>
+    </li>
+
+    <li>Command-line Options
+    <br>
+    <br>
+        <ul>
+        <li>-b
+        <br>
+        <br>
+
+        Disable user interaction for use within scripts.  Note that
+        the client will fail if any interaction is required, which is
+        normally only required when your Mesh key has expired or is
+        otherwise unavailable.
+
+        <br>
+        <br>
+        </li>
+        <li>-g
+        <br>
+        <br>
+
+        By default, the client will generate a new Mesh key only when
+        the previous key has expired.  This option forces the
+        generation of a new key.
+
+        <br>
+        <br>
+        </li>
+        <li>-k
+        <br>
+        <br>
+
+        By default, the client leaves any SSH agents started on your
+        behalf running for future invocations after the client exits.
+        This option forces spawned agents to be killed before exiting.
+        Note that "-b" automatically implies "-k".
+        
+        <br>
+        <br>
+        </li>
+        <li>--keygen-user user
+        <br>
+        <br>
+
+        This option specifies the user that should be used during key
+        generation.  Note that this option requires that the
+        administrator has enabled the ability to generate keys for the
+        current or "-u" user by the given user.
+
+        <br>
+        <br>
+        </li>
+        <li>-u user
+        <br>
+        <br>
+
+        Specify user name.  Note that this option <b>is required if your
+        local user name differs from your user name within the target
+        Mesh domain and you have not modified your <a
+        href="#sshconf">SSH configuration</a> appropriately</b>.
+
+        <br>
+        <br>
+        </li>
+        <li>-v
+        <br>
+        <br>
+
+        Enable verbose output for debugging purposes.
+
+        </li>
+        </ul>
+    </li>
+    </ul>
+
+<hr>
+<a name="authorizations"></a>
+<b>Mesh Authorizations</b>
+<br>
+<br>
+
+    The basic set of operations that may be performed using Mesh is
+    specified by the administrator.  To protect accounts from malicious
+    use of Mesh keys, users must grant execute and write permissions to
+    Mesh operations on each target system.
+
+    <ol>
+    <a name="execauth"></a>
+    <li>Execute Authorization
+    <br>
+    <br>
+
+        By default, even Mesh operations permitted by site policy are
+        not allowed to execute on a given host.  To enable Mesh
+        operations to a given host, the file ~/.meshrc must exist on
+        that host, which can be created by invoking the following:
+
+        <pre>    touch ~/.meshrc</pre>
+
+        Note that this must only be done once for systems with shared
+        home file systems.  Other systems must be authorized
+        separately.  Once this file exists on a host, all operations
+        permitted by site policy are allowed to execute on that host.
+
+        <br>
+        <br>
+    </li>
+
+    <a name="writeauth"></a>
+    <li>Write Authorization
+    <br>
+    <br>
+
+        By default, Mesh operations are not allowed to write to the
+        file system on a given host.  To enable writes to a given
+        directory on a given host, that directory must be added (on a
+        separate line) to the ~/.meshrc file on that host.  For example,
+        the following lines in ~/.meshrc
+
+        <pre>    /nobackup4
+    /tmp</pre>
+
+        indicate that writes should be permitted to /nobackup4 and
+        /tmp.  Each directory is the root of allowed writes, thus this
+        configuration would allow writes to all files and directories
+        rooted at /nobackup4 and /tmp (e.g. /nobackup4/some/dir,
+        /tmp/some/file, etc.).
+
+        <br>
+        <br>
+
+        Note that the root directory cannot be authorized.  Also note
+        that dot files (i.e. ~/.*) in your home directory are never
+        writable regardless of the contents of ~/.meshrc.
+
+    </li>
+    </ol>
+
+<hr>
+<a name="commands"></a>
+<b>Mesh Commands</b>
+<br>
+<br>
+
+    Examples of the use of commands that may be executable through
+    Mesh are given below.  Note that Mesh commands must be <a
+    href="#execauth">authorized for execution</a> on each target host
+    and transfers to a given host must be <a
+    href="#writeauth">authorized for writes</a>.  Note that before a
+    given operation is performed, the client may ask for certain
+    information, including the existing or new passphrase for
+    ~/.ssh/id_rsa, authentication information for mp.example.com, and/or
+    the authentication information for map.example.com.  
+
+    <ul>
+    <li>
+    <b>File Transfer</b>
+    <br>
+    <br>
+        <ul>
+        <li>
+        <b>bbftp</b>
+            (<a href="http://doc.in2p3.fr/bbftp/3.2.0.bbftp.html">man page</a>)
+        <br>
+
+            <pre>    mc bbftp -e "put /foo/bar /tmp/foobar" host1.example.com</pre>
+
+            Note that <b>you must use the fully-qualified domain name
+            of the target host</b> (in this case, example.com) if
+            you are not within the target Mesh domain.
+
+            <br>
+            <br>
+        </li>
+
+        <li>
+        <b>rsync</b>
+            (<a href="http://www.samba.org/ftp/rsync/rsync.html">man page</a>)
+        <br>
+
+            <pre>    mc rsync foobar host1:/tmp</pre>
+
+            Note that even if your home directory has been <a
+            href="#writeauth">authorized for writes</a>, <b>rsync
+            transfers to your home directory will fail unless the "-T"
+            or "--temp-dir" option is specified</b>.  This is because
+            rsync uses temporary files starting with "." during
+            transfers, which cannot be written in your home directory.
+            By specifying an alternate temporary directory that is <a
+            href="#writeauth">authorized for writes</a>, this problem
+            can be avoided.  For example, the following uses /tmp as the
+            temporary directory when files are transferred to the home
+            directory.  Make sure that the temporary directory specified
+            has enough space for the files being transferred.
+
+            <pre>    mc rsync -T /tmp foobar host1:</pre>
+        </li>
+
+        <li>
+        <b>scp</b>
+            (<a href="http://www.openbsd.org/cgi-bin/man.cgi?query=scp&sektion=1">man page</a>)
+        <br>
+
+            <pre>    mc scp foobar host1:/tmp</pre>
+        </li>
+
+        <li>
+        <b>sftp</b>
+            (<a href="http://www.openbsd.org/cgi-bin/man.cgi?query=sftp&sektion=1">man page</a>)
+        <br>
+
+            <pre>    mc sftp host1</pre>
+
+        </li>
+        </ul>
+    </li>
+
+    <li>
+    <b>File Monitoring</b>
+    <br>
+    <br>
+
+        <ul>
+        <li>
+        <b>test</b>
+            (<a href="http://www.openbsd.org/cgi-bin/man.cgi?query=test&sektion=1">man page</a>)
+        <br>
+
+            <pre>    mc ssh host1 test -f /tmp/foobar</pre>
+        </li>
+        </ul>
+    </li>
+
+    <li>
+    <b>Job Monitoring</b>
+    <br>
+    <br>
+
+        <ul>
+        <li>
+        <b>qstat</b>
+            (<a href="http://linux.die.net/man/1/qstat">man page</a>)
+        <br>
+
+            <pre>    mc ssh host1 qstat @pbs1</pre>
+        </li>
+        </ul>
+    </li>
+    </ul>
+
+
+<hr>
+<a name="output"></a>
+<b>Mesh Expected Output</b>
+<br>
+<br>
+
+The following sequence shows the expected output for the command "mc scp
+foobar host1:/tmp" for a user who has never used Mesh before.  The
+conditions under which each subsequence will be seen are indicated next
+to each header.  Most of the items will only be seen once or during key
+generation.  A second invocation will only show the <a
+href="#cmdout">command output</a> portion.
+
+    <ol>
+    <li>Host key verification (<b>seen once per client host</b>)
+        <pre>    No host key found for map.example.com
+    ...continue if fingerprint is xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx
+    The authenticity of host 'map.example.com (x.x.x.x)' can't be established.
+    RSA key fingerprint is xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx.
+    Are you sure you want to continue connecting (yes/no)? yes
+    No host key found for mp.example.com
+    ...continue if fingerprint is xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx
+    The authenticity of host 'mc.example.com (x.x.x.x)' can't be established.
+    RSA key fingerprint is xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx.
+    Are you sure you want to continue connecting (yes/no)? yes</pre>
+    </li>
+
+    <li>Identity creation (<b>seen during key generation if no identity available</b>)
+        <pre>    Cannot find identity /home/user/.ssh/id_rsa
+    ...do you wish to generate it? (y/n)  y
+    Generating public/private rsa key pair.
+    Enter passphrase (empty for no passphrase):
+    Enter same passphrase again:
+    Your identification has been saved in /home/user/.ssh/id_rsa.
+    Your public key has been saved in /home/user/.ssh/id_rsa.pub.
+    The key fingerprint is:
+    xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx user@host</pre>
+    </li>
+
+    <li>Identity addition to agent (<b>seen during key generation</b>)
+        <pre>    Adding identity /home/user/.ssh/id_rsa to agent
+    Enter passphrase for /home/user/.ssh/id_rsa:
+    Identity added: /home/user/.ssh/id_rsa (/home/user/.ssh/id_rsa)</pre>
+    </li>
+
+    <li>Identity initialization (<b>seen once per identity</b>)
+        <pre>    Initializing identity on map.example.com (provide login information)
+    Password:
+    Key xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx:xx uploaded successfully</pre>
+    </li>
+
+    <li>Mesh key generation (<b>seen when no valid Mesh keys available</b>)
+        <pre>    Generating key on mp.example.com (provide login information)
+    Password:</pre>
+    </li>
+
+    <li>Client upgrade (<b>seen during key generation when new client available</b>)
+        <pre>    A newer version of the client is available (0.37 vs. 0.36)
+    ...do you wish to replace the current version? (y/n)  y</pre>
+    </li>
+
+    <li><a name="cmdout"></a>Command output (<b>always seen</b>)
+        <pre>    foobar                                        100%    5     0.0KB/s   00:00</pre>
+    </li>
+
+    </ol>
+
+<hr>
+<a name="troubleshoot"></a>
+<b>Mesh Troubleshooting</b>
+<br>
+<br>
+
+    The following error messages may be encountered during Mesh client
+    usage.  Note that the "-v" option can be given to the Mesh client
+    to output additional debugging information.
+
+    <br>
+    <ul>
+    <li>"WARNING: Your password has expired"
+    <br>
+    <br>
+
+        This message indicates that your current password has expired
+        and must be changed.
+
+        <br>
+        <br>
+    </li>
+
+    <li>"Permission denied (~/.meshrc not found)"
+    <br>
+    <br>
+
+        This message indicates that you have not created a .meshrc file
+        in your home directory on the target host.  Mesh commands must
+        be <a href="#execauth">authorized for execution</a> on each
+        target host.
+    
+        <br>
+        <br>
+    </li>
+
+    <li>"Permission denied (unauthorized command)"
+    <br>
+    <br>
+
+        This message indicates that you have attempted an operation that
+        is not currently authorized by your Mesh installation.  Check
+        that the command line is valid and that the attempted command is
+        one of the <a href="#commands">authorized commands</a>.  Certain
+        options to <a href="#commands">authorized commands</a> may also
+        be disallowed, but these should never be needed in standard
+        usage scenarios.
+    
+        <br>
+        <br>
+    </li>
+
+    <li>Permission denied during file access (various forms)
+    <br>
+    <br>
+
+        These messages indicate that you attempted to read or write a
+        file for which such access is not allowed.  The most common
+        cause is forgetting to <a href="#writeauth">authorize
+        directories for writes</a>.  Reads and writes of ~/.* are
+        never permitted.
+    </li>
+
+    </ul>
+  </body>
+</html>

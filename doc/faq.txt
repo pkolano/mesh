@@ -1,0 +1,108 @@
+Mesh Frequently Asked Questions
+===============================
+
+This is a work in progress...
+
+1. What is Mesh?
+2. Why use Mesh?
+3. Is Mesh stable?
+4. What operating systems does Mesh support?
+5. What operating systems has Mesh been tested on?
+6. Mesh?  MP?  MAP?  MIA?  Mash?  Mess?  What do all the acronyms mean?
+7. Why is Mash distributed as "mash.pl" instead of "mash"?
+
+
+1. What is Mesh?
+
+    Mesh is a lightweight grid middleware based on OpenSSH.  It provides
+    single sign-on using standard SSH public/private key pairs and
+    enforces fine-grained authorizations.
+
+
+2. Why use Mesh?
+
+    It is based on stock SSH.  You do not have to install a completely
+    new infrastructure just to obtain the benefits of grid computing
+    (see https://pkolano.github.io/papers/sacmat07.pdf).  No
+    client-side software is needed besides a stock SSH client.
+
+    It is easy to install and administer.  Only 5 files and 2
+    environment variables are needed on hosts already running SSH.
+
+    It is easy to use.  All services are accessed as SSH remote
+    commands, which utilize the syntax, commands, and models already
+    understood by users
+
+    It adheres to fundamental security principles.  Mesh is based on
+    the proven security of SSH together with additional fine-grained
+    authorizations.
+
+
+3. Is Mesh stable?
+
+    Yes.  Mesh has been running in production at NASA since 2004.
+
+
+4. What operating systems does Mesh support?
+
+    In general, Mesh was designed for Unix-like systems.  The Mash
+    shell, however, can run on any system with Perl (e.g. including
+    Windows).  The MIA is based on the standard C library and requires a
+    library preload mechanism (e.g. LD_PRELOAD, _RLD_LIST, etc.).  The
+    Bypass framework, on which it's based, requires an indirect system
+    call interface (i.e. syscall), which eliminates some systems such as
+    AIX.
+
+
+5. What operating systems has Mesh been tested on?
+
+    Debian Linux
+    Red Hat Linux
+    SuSE Linux
+    SGI IRIX
+
+    The underlying Bypass framework has additionally been tested on
+    Solaris and OSF/1.
+
+
+6. Mesh?  MP?  MAP?  MIA?  Mash?  Mess?  What do all the acronyms mean?
+
+    Mesh: Middleware using Existing SSH Hosts
+
+        "Mesh computing" is like "grid computing", but designed to be
+        lightweight, practical, and secure while using existing
+        infrastructure.
+
+    MP: Mesh Proxy
+
+        The MP is the component that enforces site policy like the
+        "military police" enforce military policy.
+
+    MAP: Mesh Authentication Point
+
+        The MAP is the component that resources consult to "find" user
+        public keys.
+
+    MIA: Mesh Interposition Agent
+
+        The MIA is an interposition agent loaded into SSH servers that
+        provides single sign-on capabilities and makes system calls
+        that attempt to bypass host policy go "missing in action". ;)
+
+    Mash: Mesh Authorization Shell
+
+        Mash is a flexible restricted shell that "mashes" commands that
+        are not authorized.
+
+    Mess: Mesh Exec Security Shell
+
+        Mess is a simple restricted shell that "messes" with commands
+        that are not authorized.
+
+
+7. Why is Mash distributed as "mash.pl" instead of "mash"?
+
+    Because the OS X file system is case-insensitive and would put
+    "mash" into the "Mash" directory.  It will be automatically
+    renamed during installation.
+

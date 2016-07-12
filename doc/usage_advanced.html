@@ -1,0 +1,472 @@
+<html>
+  <head>
+    <title>Middleware using Existing SSH Hosts (Mesh)</title>
+  </head>
+  <body>
+Using the Mesh Virtual File System (VFS)<br>
+<br>
+
+<hr>
+<b>Introduction</b>
+<br>
+<br>
+
+    The <a href="usage.html#client">Mesh client</a> includes a virtual file
+    system (VFS) capability that allows files across all Mesh-enabled
+    resources to be accessed using standard file system commands.  For
+    example, the command:
+    
+
+    <pre>    ls host1:/tmp</pre>
+
+    would list the files in /tmp on host1.  The command:
+
+    <pre>    cp foobar host1:/tmp</pre>
+
+    would copy the file "foobar" from the current directory on the
+    local host to /tmp on host1.
+    
+    <br>
+    <br>
+
+    The set of <a href="#commands">supported commands</a> includes
+    cat, cd, chgrp, chmod, chown, cmp, cp, df, diff, du, file, grep,
+    head, less, ln, ls, mkdir, more, mv, pwd, rm, rmdir, tail, tee,
+    test, touch, and wc.  Note that this functionality is not a true
+    file system since only these commands are supported and only when
+    used from within a shell.  Unlike more general approaches such as <a
+    href="http://fuse.sourceforge.net">FUSE</a>, however, the Mesh
+    capability is completely portable and can be enabled with no
+    additional privileges or software.
+    
+    <br>
+    <br>
+
+    Commands through the VFS functionality can act on any combination of
+    local and remote files, where remote files are prefixed with
+    "host:" similar to scp syntax.  For example, the command:
+    
+    <pre>    cat host1:/tmp/rfile ~/lfile</pre>
+
+    would print the file "rfile" in /tmp on host1 as well as the file
+    "lfile" in the user's home directory on the local host to the
+    terminal.  Any number of hosts can be included in any command.  For
+    example, the command:
+
+    <pre>    diff host1:/tmp/host1_file host2:/tmp/host2_file</pre>
+    
+    would show the differences between the file "host1_file" in /tmp on
+    host1 and the file "host2_file" in /tmp on host2.  The client
+    determines if any remote access is needed based on the path(s)
+    given.  If not, it will execute the command locally as given as
+    rapidly as possible.  Fully local commands also support all options
+    with the exception of options of the form "-f value" (i.e.
+    single-dash options that take values).
+
+    <br>
+    <br>
+
+<hr>
+<b>VFS Activation</b>
+<br>
+
+    <ul>
+    <li>Requirements
+    <br>
+    <br>
+
+        Currently, Mesh VFS functionality is <b>only supported for
+        bash</b>, but csh support is planned for the future.  This
+        functionality <b>requires Perl version 5.8.5</b> (note that this
+        is more recent than version 5.6.1 required by the <a
+        href="usage.html">basic client functionality</a>).  It also
+        <b>requires the standard Unix utilities cat, column, false,
+        sort, and true</b> and has been tested successfully on Linux, OS
+        X, and Windows under <a href="http://www.cygwin.com">Cygwin</a>
+        and <a href="http://www.colinux.org">coLinux</a>.  Note that
+        users of Windows under <a
+        href="http://www.cygwin.com">Cygwin</a> may need to install the
+        coreutils and util-linux packages to obtain these utilities.  
+
+        <br>
+        <br>
+
+    </li>
+    <li>Activation/Deactivation
+    <br>
+    <br>
+        <ol>
+
+        <li><a href="usage.html#client">Install the Mesh client</a> if
+        you have not already done so
+
+        <br>
+        <br>
+        </li>
+
+        <li>Activate VFS functionality in a bash shell
+        <pre>	eval `mc -s bash`</pre>
+
+        This will load aliases and functions used to intercept specific
+        commands and replace them with commands through the Mesh client
+        that perform the actions requested.
+        
+        <br>
+        <br>
+        </li>
+
+        <li>Deactivate VFS functionality in a bash shell whenever desired
+        <pre>	eval `mc -r bash`</pre>
+        </li>
+
+        </ol>
+
+    </li>
+    <li>Command-line Options
+    <br>
+    <br>
+
+        The behavior of the virtual file system can be modified using
+        various options at the time it is activated.
+
+        <br>
+        <br>
+        <ul>
+        <li>-ocmd=opts
+        <br>
+        <br>
+
+        Specify default options for a given command since the VFS
+        functionality overrides any existing aliases for its supported
+        set of commands.
+
+        <br>
+        <br>
+        </li>
+
+        <li>-t transport
+        <br>
+        <br>
+
+        Change the file transport from its "sftp" default to
+        "transport".  Currently, the only additional transport available
+        is "bbftp".  Note that using bbftp as the transport may slow
+        down certain operations on small files as bbftp has higher
+        startup overhead.
+
+        <br>
+        <br>
+        </li>
+
+        <li>-u user
+        <br>
+        <br>
+
+        Specify user name.  Note that this option <b>is required
+        if your local user name differs from your user name within the
+        target Mesh domain and you have not modified your <a
+        href="usage.html#sshconf">SSH configuration</a> appropriately</b>.
+
+        </li>
+        </ul>
+        <br>
+
+        For example, the following invocation activates the client
+        virtual file system using bbftp as the transport mechanism,
+        "user1" as the user and adds colorization of local file
+        listings using the Linux ls "--color=always" option.
+
+        <pre>	eval `mc -s bash -t bbftp -u user1 -ols=--color=always`</pre>
+    </li>
+    </ul>
+
+<hr>
+<b>VFS Caveats</b>
+<br>
+<br>
+
+    The VFS functionality is still somewhat experimental.  In general,
+    it works for the most common usage scenarios with some caveats.  In
+    particular:
+
+        <ul>
+        <li>
+        
+        "Whole file" commands (i.e. commands that must process the
+        entire file), including cat, cmp, diff, grep, wc (and currently
+        more/less due to implementation) retrieve files first before
+        processing for efficiency.  Thus, these commands should not be
+        executed on very large files.
+
+        <br>
+        <br>
+        </li>
+        <li>
+        
+        There is a conflict between commands that take piped input and
+        the custom globbing of the client, thus these commands have
+        portions of globbing support disabled.  These commands are grep,
+        head, less, more, tail, tee, and wc.  In these cases, globbing
+        will work for absolute prefixes, but not relative.  For example,
+        "grep foo host1:/tmp/*" will work, but "cd host1:/tmp; grep
+        foo *" will not.
+
+        <br>
+        <br>
+        </li>
+        <li>
+        
+        Redirection to/from remote files doesn't work.  The same effect
+        can be achieved using cat and tee (e.g. "grep localhost
+        &lt;host1:/etc/hosts &gt;a" would become "cat host1:/etc/hosts
+        |grep localhost |tee a &gt;/dev/null").  Redirection still works
+        normally for local files.
+
+        <br>
+        <br>
+        </li>
+        <li>
+        
+        The first time a command is run involving a particular host, a
+        SFTP connection is created to that host.  When running "ps", it
+        may appear as if a zombie client process is running.
+
+        <br>
+        <br>
+        </li>
+        <li>
+        
+        Commands may hang the first time after switching networks
+        (e.g. with a laptop).  If this happens, hit Control-c and it
+        will work the next time.
+
+        </li>
+        </ul>
+<hr>
+<a name="commands"></a>
+<b>VFS Commands</b>
+<br>
+<br>
+
+    Currently supported commands and their currently supported options
+    are below.  Unsupported options will simply be ignored except where
+    noted.  All commands are still subject to <a
+    href="usage.html#authorizations">Mesh authorizations</a>, thus
+    something that cannot be executed or written normally through
+    Mesh cannot be executed or written through this functionality
+    either.
+
+    <br>
+    <ul>
+    <li><b>cat (no options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>cd (no options)</b>
+    <br>
+    <br>
+
+        Note that when changing to remote directories, cd only changes
+        $PWD so to make changes visible, the working directory (i.e. \w
+        in bash) must be in your prompt.  For example, the following
+        prompt:
+
+        <pre>    export PS1="\h:\w&gt; "</pre>
+
+        would display the current host name followed by the current
+        working directory.
+
+    <br>
+    <br>
+    </li>
+    <li><b>chgrp (no options)</b>
+    <br>
+    <br>
+
+        Groups may be specified either by number or by name.  Names
+        will be resolved on the remote host.
+
+    <br>
+    <br>
+    </li>
+    <li><b>chmod (no options)</b>
+    <br>
+    <br>
+
+        Modes must be specified numerically (e.g. 0700).  Symbolic
+        modes, such as a+rX, are not currently supported.
+
+    <br>
+    <br>
+    </li>
+    <li><b>chown (no options)</b>
+    <br>
+    <br>
+
+        Users and groups may be specified either by number or by name.
+        Names will be resolved on the remote host.
+
+    <br>
+    <br>
+    </li>
+    <li><b>cmp (all options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>cp [-r]</b>
+    <br>
+    <br>
+
+        Note that copies between two remote hosts transfer files to
+        the local host first since Mesh does not allow third party
+        transfers.  Thus, very large file transfers between remote
+        systems should be achieved using an alternate approach.
+
+    <br>
+    <br>
+    </li>
+    <li><b>df [-i]</b>
+    <br>
+    <br>
+
+        Note that 1024-byte blocks are used.
+
+    <br>
+    <br>
+    </li>
+    <li><b>diff (all options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>du [-a] [-b] [-s]</b>
+    <br>
+    <br>
+
+        Note that 1024-byte blocks are used.
+
+    <br>
+    <br>
+    </li>
+    <li><b>file (all options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>grep (all options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>head [-number]</b>
+    <br>
+    <br>
+
+        Note that head does not support the form "-n number", thus,
+        for example, to display the first 5 lines of a file, use "-5"
+        and not "-n 5".
+
+    <br>
+    <br>
+    </li>
+    <li><b>less (all options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>ln [-s]</b>
+    <br>
+    <br>
+
+        Note that hard links are not supported.  Links from remote files
+        to local files (e.g. ln -s host1:/foo /foo) will be dereferenced
+        during certain operations (e.g. cat /foo will cat host1:/foo).
+        
+    <br>
+    <br>
+    </li>
+    <li><b>ls [-1] [-d] [-l]</b>
+    <br>
+    <br>
+
+        For efficiency purposes, ls behaves slightly differently for
+        remote commands than for local.  In particular "ls -l" will not
+        show links by default and will show what is actually linked
+        instead of the link itself.  Link details can be obtained using
+        the "-d" option (e.g.  ls -ld *).
+
+    <br>
+    <br>
+
+        Also for efficiency, ls processes remote files before local
+        files, so output ordering may be changed when remote and local
+        files are interleaved on the ls command line.  For example, "ls
+        /foo host1: /bar" would show host1: first, then /foo, then /bar.
+
+    <br>
+    <br>
+    </li>
+    <li><b>mkdir (no options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>more (all options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>mv (no options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>pwd (no options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>rm [-r]</b>
+    <br>
+    <br>
+    </li>
+    <li><b>rmdir (no options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>tail [-number]</b>
+    <br>
+    <br>
+
+        Note that tail does not support the form "-n number", thus, for
+        example, to display the last 5 lines of a file, use "-5" and
+        not "-n 5".
+
+    <br>
+    <br>
+    </li>
+    <li><b>tee [-a]</b>
+    <br>
+    <br>
+    </li>
+    <li><b>test [-b] [-c] [-d] [-e] [-f] [-g] [-h] [-k] [-L] [-p] [-r] [-s] [-S] [-u] [-w]</b>
+    <br>
+    <br>
+
+        Note that compound and string tests are not supported.
+        Compound and string tests can be achieved using multiple test
+        commands separated by shell compound operators.  For example,
+
+        <pre>    test -f host1:/foo -a "abc" != "123"</pre>
+
+        would become
+
+        <pre>    test -f host1:/foo &amp;&amp; test "abc" != "123"</pre>
+
+        Alternatively, the "actual" test command can be executed
+        through Mesh:
+    
+        <pre>    mc ssh host1 test -f /foo -a "abc" != "123"</pre>
+
+    </li>
+    <li><b>touch (no options)</b>
+    <br>
+    <br>
+    </li>
+    <li><b>wc (all options)</b>
+    </li>
+    </ul>
+  </body>
+</html>
