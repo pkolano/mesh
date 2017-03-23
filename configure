@@ -118,7 +118,7 @@ if (!system("perl -MFile::Glob -e '1' 2>/dev/null")) {
 
 if ($opts{type} ne 'mash') {
     $ENV{PREFIX} = $opts{prefix};
-    $error = 1 if (system("cd ../bypass; ./configure"));
+    $error = 1 if (system("cd bypass_src; ./configure"));
     $error = 1 if (system("cd bypass; ./configure"));
 }
 

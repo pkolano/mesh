@@ -1,0 +1,855 @@
+/*
+Bypass
+Copyright (C) 1999-2001 Douglas Thain
+http://www.cs.wisc.edu/condor/bypass
+This program is released under a BSD License.
+See the file COPYING for details.
+*/
+
+/*
+This file contains the collected Condor wisdom of what mechanism is best of trapping and re-invoking each UNIX system call.  This is definitely a work in progress -- entries are added here as we attempt to work with new systems calls and then run into difficulty.
+*/
+
+/* Each item in this default rule applies when nothing else has matched.  By default, generate additional entry points beginning with _ and __, and use internal names matching the procedure.  Assume that named functions are system calls, but fall back on a libcall.  HPUX requires that the complete path to a library must be given, while IRIX requires an incomplete path to select the correct ABI.  Other platforms are flexible.  */
+
+options "*"
+	entry "*" "_*" "__*" "__libc_*"
+	local_name "*"
+	remote_name "*"
+	syscall
+	#ifdef hpux
+		library "/usr/lib/libc"
+	#else
+		library "libc"
+	#endif
+	;
+
+/* exit() runs all the atexit functions, then calls _exit() which does further cleanup.  _exit() is well-documented, so we don't want the entry feature to interfere with it.  On HPUX, ___exit() is the internal interface to "normal exit", and _exit is the interface to "fast exit". */
+
+options "exit"
+	libcall
+	#ifdef hpux
+		entry "exit" "___exit"
+	#else
+		entry "exit"
+	#endif
+	;
+
+/* _exit() should define no other entry points */
+
+options "_exit"
+	libcall
+	entry "_exit"
+	;
+
+options "open"
+	entry "open" "_open" "__open" "__libc_open" "open64" "_open64" "__open64" "__libc_open64"
+	external "" "_open_map"
+	also
+	{{
+		extern "C" int creat( const char *path, mode_t mode ) {
+			return open( path, O_CREAT|O_WRONLY|O_TRUNC, mode );
+		}
+		extern "C" int _creat( const char *path, mode_t mode ) {
+			return creat( path, mode );
+		}
+		extern "C" int __creat( const char *path, mode_t mode ) {
+			return creat( path, mode );
+		}
+		extern "C" int creat64( const char *path, mode_t mode ) {
+			return creat( path, mode );
+		}
+		extern "C" int _creat64( const char *path, mode_t mode ) {
+			return creat( path, mode );
+		}
+		extern "C" int __creat64( const char *path, mode_t mode ) {
+			return creat( path, mode );
+		}
+
+		/* This is a desparate move.  The definition of fopen in glibc contains calls to private instances of open() that we cannot trap.  So, provide an implementation of fopen() here.
+
+		Here is the original copyright tag on this fragment:
+
+                Copyright (C) 1993, 1995, 1997-2000, 2001 Free Software Foundation, Inc.
+                This file is part of the GNU C Library.
+                Written by Per Bothner <bothner@cygnus.com>.     
+		*/
+
+		extern "C" {
+
+		@if defined __GLIBC__ && __GLIBC__ >= 2     
+
+		@ifndef _LIBC
+		@define _LIBC
+		@endif
+
+		@ifndef _POSIX_SOURCE
+		@ define _POSIX_SOURCE
+		@endif
+		
+		@include "libio.h"
+
+		@ifndef _IO_seek_end
+		@define _IO_seek_end 2
+		@endif
+
+		@ifndef _IO_pos_BAD
+		@define _IO_pos_BAD ((_IO_off64_t) -1)        
+		@endif
+
+		@include <assert.h>
+		@include <fcntl.h>
+		@include <sys/types.h>
+		@include <sys/stat.h>
+		@include <string.h>
+		@include <errno.h>
+		@include <unistd.h>
+		@include <stdlib.h>
+
+		@ifndef errno
+		extern int errno;
+		@endif
+
+		@ifndef __set_errno
+		@ define __set_errno(Val) errno = (Val)
+		@endif
+
+		@ifndef _IO_mask_flags
+		@define _IO_mask_flags(fp, f, mask) ((fp)->_flags = ((fp)->_flags & ~(mask)) | ((f) & (mask)))            
+		@endif
+
+		@ifndef _IO_file_is_open
+		@define _IO_file_is_open(__fp) ((__fp)->_fileno != -1)
+		@endif
+
+		extern _IO_off64_t _IO_new_file_seekoff( _IO_FILE *fp, _IO_off64_t offset, int dir, int mode );
+		extern void _IO_link_in __P ((struct _IO_FILE_plus *)); 
+
+		_IO_FILE *
+		_IO_file_open ( _IO_FILE *fp, const char *filename, int posix_mode, int prot, int read_write, int is32not64)
+		{
+		  int fdesc;
+		  fdesc = open (filename, posix_mode, prot);
+
+		  if (fdesc < 0)
+		    return NULL;
+		  fp->_fileno = fdesc;
+		  _IO_mask_flags (fp, read_write,_IO_NO_READS+_IO_NO_WRITES+_IO_IS_APPENDING);
+		  if (read_write & _IO_IS_APPENDING)
+		    if (_IO_new_file_seekoff(fp, (_IO_off64_t)0, _IO_seek_end, _IOS_INPUT|_IOS_OUTPUT)
+			== _IO_pos_BAD && errno != ESPIPE)
+		      return NULL;
+		  _IO_link_in ((struct _IO_FILE_plus *) fp);
+		  return fp;
+		}
+
+		_IO_FILE *
+		_IO_new_file_fopen ( _IO_FILE *fp, const char *filename, const char *mode, int is32not64)
+		{
+		  int oflags = 0, omode;
+		  int read_write;
+		  int oprot = 0666;
+		  int i;
+		  _IO_FILE *result;
+		@ifdef _LIBC
+		  const char *last_recognized;
+		@endif
+
+		  if (_IO_file_is_open (fp))
+		    return 0;
+		  switch (*mode)
+		    {
+		    case 'r':
+		      omode = O_RDONLY;
+		      read_write = _IO_NO_WRITES;
+		      break;
+		    case 'w':
+		      omode = O_WRONLY;
+		      oflags = O_CREAT|O_TRUNC;
+		      read_write = _IO_NO_READS;
+		      break;
+		    case 'a':
+		      omode = O_WRONLY;
+		      oflags = O_CREAT|O_APPEND;
+		      read_write = _IO_NO_READS|_IO_IS_APPENDING;
+		      break;
+		    default:
+		      __set_errno (EINVAL);
+		      return NULL;
+		    }
+		@ifdef _LIBC
+		  last_recognized = mode;
+		@endif
+		  for (i = 1; i < 4; ++i)
+				    {
+		      switch (*++mode)
+					{
+			case '\0':
+			  break;
+			case '+':
+			  omode = O_RDWR;
+			  read_write &= _IO_IS_APPENDING;
+		@ifdef _LIBC
+			  last_recognized = mode;
+		@endif
+			  continue;
+			case 'x':
+			  oflags |= O_EXCL;
+		@ifdef _LIBC
+			  last_recognized = mode;
+		@endif
+			  continue;
+			case 'b':
+		@ifdef _LIBC
+			  last_recognized = mode;
+		@endif
+			default:
+			  /* Ignore.  */
+			  continue;
+			}
+		      break;
+		    }
+		
+		  result = _IO_file_open (fp, filename, omode|oflags, oprot, read_write,
+					  is32not64);
+
+		  return result;
+		}
+
+		@endif /* GLIBC */
+
+		} /* extern "C" */
+	}}
+	;
+
+options "fcntl"
+	external "" "_fcntl_map"
+	;
+
+#ifndef __osf__
+
+options "readdir"
+	also
+	{{
+		#if !defined(sgi)
+
+		#if ( defined(__GNUC__) && (__GNUC__ < 3) )
+		struct dirent64
+		{
+			__ino64_t d_ino;
+			__off64_t d_off;
+			unsigned short int d_reclen;
+			unsigned char d_type;
+			char d_name[256];
+		};
+		#endif
+
+		extern "C" struct dirent64 * readdir64( DIR *dir ) {
+			struct dirent *small;
+			/* Some dirents don't actually allocate space for the bath, so we have to expand it with a buffer. */
+			static union {
+				struct dirent64 big;
+				char buffer[4096];
+			} d;
+
+			small = readdir(dir);
+			if(!small) return 0;
+
+			d.big.d_ino = small->d_ino;
+			#if !defined(__osf__)
+				d.big.d_off = small->d_off;
+			#endif
+			d.big.d_reclen = sizeof(d.big);
+			#if defined(linux)
+				d.big.d_type = small->d_type;
+			#endif
+			strcpy(d.big.d_name,small->d_name);
+
+			return &d.big;
+		}
+
+		#ifdef sun
+			/* do *not* trap _readdir64, because that is used in the impl of readdir. */
+		#else
+			extern "C" struct dirent64 * _readdir64( DIR *dir ) { return readdir64(dir); }
+		#endif
+
+		extern "C" struct dirent64 * __readdir64( DIR *dir ) { return readdir64(dir); }
+		extern "C" struct dirent64 * __libc_readdir64( DIR *dir ) { return readdir64(dir); }
+		#endif
+	}};
+
+#endif /* osf */
+
+options "lseek"
+	entry "lseek" "_lseek" "__lseek" "__libc_lseek"
+	also
+	{{
+		extern "C" long long llseek( int fd, long long offset, int whence ) {
+			return lseek( fd, offset, whence );
+		}
+		extern "C" long long _llseek( int fd, long long offset, int whence ) {
+			return lseek( fd, offset, whence );
+		}
+		extern "C" long long __llseek( int fd, long long offset, int whence ) {
+			return lseek( fd, offset, whence );
+		}
+		extern "C" long long __libc_llseek( int fd, long long offset, int whence ) {
+			return lseek( fd, offset, whence );
+		}
+		extern "C" long long lseek64( int fd, long long offset, int whence ) {
+			return lseek( fd, offset, whence );
+		}
+		extern "C" long long _lseek64( int fd, long long offset, int whence ) {
+			return lseek( fd, offset, whence );
+		}
+		extern "C" long long __lseek64( int fd, long long offset, int whence ) {
+			return lseek( fd, offset, whence );
+		}
+		extern "C" long long __libc_lseek64( int fd, long long offset, int whence ) {
+			return lseek( fd, offset, whence );
+		}
+
+		@ifdef __GLIBC__
+		extern "C" _IO_off64_t _IO_file_seek ( _IO_FILE *fp, _IO_off64_t offset, int dir )
+		{
+		  return lseek (fp->_fileno, offset, dir);
+		}
+		@endif
+}};
+
+options "mmap"
+	entry "mmap" "_mmap" "__mmap" "__libc_mmap"
+	also
+	{{
+		extern "C" void *mmap64( void *start, size_t length, int prot, int flags, int fd, long long offset ) {
+			return mmap(start,length,prot,flags,fd,offset);
+		}
+		extern "C" void *_mmap64( void *start, size_t length, int prot, int flags, int fd, long long offset ) {
+			return mmap(start,length,prot,flags,fd,offset);
+		}
+		extern "C" void *__mmap64( void *start, size_t length, int prot, int flags, int fd, long long offset ) {
+			return mmap(start,length,prot,flags,fd,offset);
+		}
+		extern "C" void *__libc_mmap64( void *start, size_t length, int prot, int flags, int fd, long long offset ) {
+			return mmap(start,length,prot,flags,fd,offset);
+		}
+	}};
+
+
+#if defined(sun) || defined(sgi) || defined(linux)
+
+agent_prologue {{
+
+	extern "C" {
+		@include <sys/types.h>
+		@include <sys/stat.h>
+		@include <string.h>
+		@include <sys/time.h>
+	}
+
+	#ifdef linux
+		#if ( defined(__GNUC__) && (__GNUC__ < 3) )
+			struct stat64
+			{
+				unsigned long long st_dev;
+				unsigned short int __pad1;
+				unsigned long int st_ino;
+				unsigned long int  st_mode;
+				unsigned long int  st_nlink;
+				unsigned long int  st_uid;
+				unsigned long int  st_gid;
+				unsigned long long st_rdev;
+				unsigned short int __pad2;
+				unsigned long long st_size;
+				unsigned long int  st_blksize;
+				unsigned long long st_blocks;
+				unsigned long int  st_atime;
+				unsigned long int  __unused1;
+				unsigned long int  st_mtime;
+				unsigned long int  __unused2;
+				unsigned long int  st_ctime;
+				unsigned long int  __unused3;
+				unsigned long int  __unused4;
+				unsigned long int  __unused5;
+			};
+			@define STAT64_TO_XSTAT
+		#else
+			@define SKIP_STAT64
+		#endif
+
+		@define HAS_STAT64
+
+		@define st_atim st_atime
+		@define st_mtim st_mtime
+		@define st_ctim st_ctime
+
+		@ifndef _STAT_VER
+			@define _STAT_VER 3
+		@endif
+	#endif
+
+	#if defined(sun) || defined(sgi)
+		@ifdef _STAT_VER
+			@define STAT64_TO_XSTAT
+			@define HAS_STAT64
+		@else
+			@define _STAT_VER 2
+			@define TRAP_STAT
+			@define HAS_STAT64
+		@endif
+	#endif
+
+	@ifdef HAS_STAT64
+		void bypass_convert_stat64( int version, struct stat *source, struct stat64 *target )
+		{
+			memset( target, 0, sizeof(*target) );
+			target->st_dev = source->st_dev;
+			target->st_ino = source->st_ino;
+			target->st_mode = source->st_mode;
+			target->st_nlink = source->st_nlink;
+			target->st_uid = source->st_uid;
+			target->st_gid = source->st_gid;
+			target->st_rdev = source->st_rdev;
+			target->st_size = source->st_size;
+			target->st_atim = source->st_atim;
+			target->st_mtim = source->st_mtim;
+			target->st_ctim = source->st_ctim;
+			target->st_blksize = source->st_blksize;
+			target->st_blocks = source->st_blocks;
+			#ifdef sun
+				strcpy(target->st_fstype,source->st_fstype);
+			#endif
+		}
+	@endif
+
+	void bypass_convert_stat( int version, struct stat *source, struct stat *dest )
+	{
+		#if defined(sun) || defined(sgi)
+			@ifdef HAS_STAT64
+				if( version==3 ) {
+					bypass_convert_stat64( version, source, (struct stat64 *)dest );
+				} else {
+					memcpy( dest, source, sizeof(*dest) );
+				}
+			@else
+				memcpy( dest, source, sizeof(*dest) );
+			@endif				
+		#else
+			memcpy( dest, source, sizeof(*dest) );
+		#endif
+
+	}
+
+	@define XSTAT_SWITCH( entry, name, qname, qaname, type_one, type_two, type_three, cast, convert ) \
+		extern "C" int entry ( type_one v, type_two n, type_three * s )\
+		{\
+			int result;\
+			struct stat buf;\
+			int (*fptr)(...);\
+			bypass_layer_init();\
+			fptr = (int(*)(...)) layer_lookup( qaname, qname, (intptr_t)entry );\
+			if(!fptr) fptr = (int(*)(...)) entry;\
+			if(!layer_is_agent() || fptr==(int(*)(...))entry ) {\
+				layer_descend();\
+				result = (*fptr) ( v, n, s );\
+				layer_ascend();\
+			} else {\
+				layer_descend();\
+				result = (*fptr) ( n, &buf );\
+				convert ( v, &buf, s );\
+				layer_ascend();\
+			}\
+			return result;\
+		}
+
+	@define PLAIN_SWITCH( name, qname, qaname, type_one, type_two, cast ) \
+		extern "C" int name ( type_one n, type_two *s ) \
+		{\
+			int result;\
+			int (*fptr)(...);\
+			bypass_layer_init();\
+			fptr = (int(*)(...)) layer_lookup( qaname, qname, (intptr_t)name );\
+			if(!fptr) fptr = (int(*)(...)) name;\
+			layer_descend();\
+			result = (*fptr) ( n, s );\
+			layer_ascend();\
+			return result;\
+		}
+
+	@define PLAIN64_SWITCH( name, qname, qaname, type_one, type_two, cast ) \
+		extern "C" int name ( type_one n, type_two *s ) \
+		{\
+			int result;\
+			struct stat buf;\
+			int (*fptr)(...);\
+			bypass_layer_init();\
+			fptr = (int(*)(...)) layer_lookup( qaname, qname, (intptr_t)name );\
+			if(!fptr) fptr = (int(*)(...)) name;\
+			if(!layer_is_agent() || fptr==(int(*)(...))name ) {\
+				layer_descend();\
+				result = (*fptr) ( n, s );\
+				layer_ascend();\
+			} else {\
+				layer_descend();\
+				result = (*fptr) ( n, &buf );\
+				bypass_convert_stat64 ( 3, &buf, s );\
+				layer_ascend();\
+			}\
+			return result;\
+		}
+
+	@define PLAIN_ENTRIES( entry, type_one, type_two ) \
+		extern "C" int _##entry ( type_one path, type_two * buf ) {\
+			return entry ( path, buf );\
+		}\
+		extern "C" int __##entry ( type_one path, type_two * buf ) {\
+			return entry ( path, buf );\
+		}
+
+	@define XSTAT_ENTRIES( entry, type_one, type_two, calls, version, cast ) \
+		extern "C" int entry ( type_one path, type_two * buf ) {\
+			return calls ( version, path, (cast) buf );\
+		}\
+		extern "C" int _##entry ( type_one path, type_two * buf ) {\
+			return calls ( version, path, (cast) buf );\
+		}\
+		extern "C" int __##entry ( type_one path, type_two * buf ) {\
+			return calls ( version, path, (cast) buf );\
+		}
+}};
+
+
+options "stat"
+	switch_code
+	{{
+		@ifdef __GLIBC__
+			XSTAT_SWITCH( __xstat, stat, "__xstat", "bypass_agent_action_stat", int, const char *, struct stat, char *, bypass_convert_stat )
+			XSTAT_SWITCH( __xstat64, stat, "__xstat64", "bypass_agent_action_stat", int, const char *, struct stat64, char *, bypass_convert_stat64 )
+		@else
+			XSTAT_SWITCH( _xstat, stat, "_xstat", "bypass_agent_action_stat", int, const char *, struct stat, char *, bypass_convert_stat )
+		@endif
+
+		@ifdef TRAP_STAT
+			PLAIN_SWITCH( stat, "stat", "bypass_agent_action_stat", const char *, struct stat, char * )
+			PLAIN_ENTRIES( stat, const char *, struct stat )
+		@endif
+
+		@ifdef STAT64_TO_XSTAT
+			@if defined(__GLIBC__)
+				XSTAT_ENTRIES( stat64, const char *, struct stat64, __xstat64, _STAT_VER, struct stat64 * )
+			@else
+				XSTAT_ENTRIES( stat64, const char *, struct stat64, _xstat, 3, struct stat *)
+			@endif
+		@else
+			@ifndef SKIP_STAT64
+				PLAIN64_SWITCH( stat64, "stat64", "bypass_agent_action_stat", const char *, struct stat64, char * )
+				PLAIN_ENTRIES( stat64, const char *, struct stat64 )
+			@endif
+		@endif
+	}}
+	;
+
+
+options "lstat"
+	switch_code
+	{{
+		@ifdef __GLIBC__
+			XSTAT_SWITCH( __lxstat, lstat, "__lxstat", "bypass_agent_action_lstat", int, const char *, struct stat, char *, bypass_convert_stat )
+			XSTAT_SWITCH( __lxstat64, lstat, "__lxstat64", "bypass_agent_action_lstat", int, const char *, struct stat64, char *, bypass_convert_stat64 )
+		@else
+			XSTAT_SWITCH( _lxstat, lstat, "_lxstat", "bypass_agent_action_lstat", int, const char *, struct stat, char *, bypass_convert_stat )
+		@endif
+
+		@ifdef TRAP_STAT
+			PLAIN_SWITCH( lstat, "lstat", "bypass_agent_action_lstat", const char *, struct stat, char * )
+			PLAIN_ENTRIES( lstat, const char *, struct stat )
+		@endif
+
+		@ifdef STAT64_TO_XSTAT
+			@ifdef __GLIBC__
+				XSTAT_ENTRIES( lstat64, const char *, struct stat64, __lxstat64, _STAT_VER, struct stat64 * )
+			@else
+				XSTAT_ENTRIES( lstat64, const char *, struct stat64, _lxstat, 3, struct stat *)
+			@endif
+		@else
+			@ifndef SKIP_STAT64
+				PLAIN64_SWITCH( lstat64, "lstat64", "bypass_agent_action_lstat", const char *, struct stat64, char * )
+				PLAIN_ENTRIES( lstat64, const char *, struct stat64 )
+			@endif
+		@endif
+	}}
+	;
+
+options "fstat"
+	switch_code
+	{{
+		@ifdef __GLIBC__
+			XSTAT_SWITCH( __fxstat, fstat, "__fxstat", "bypass_agent_action_fstat", int, int, struct stat, int, bypass_convert_stat )
+			XSTAT_SWITCH( __fxstat64, fstat, "__fxstat64", "bypass_agent_action_fstat", int, int, struct stat64, int, bypass_convert_stat64 )
+		@else
+			XSTAT_SWITCH( _fxstat, fstat, "_fxstat", "bypass_agent_action_fstat", int, int, struct stat, int, bypass_convert_stat )
+		@endif
+
+		@ifdef TRAP_STAT
+			PLAIN_SWITCH( fstat, "fstat", "bypass_agent_action_fstat", int, struct stat, int )
+			PLAIN_ENTRIES( fstat, int, struct stat )
+		@endif
+
+		@ifdef STAT64_TO_XSTAT
+			@ifdef __GLIBC__
+				XSTAT_ENTRIES( fstat64, int, struct stat64, __fxstat64, _STAT_VER, struct stat64 * )
+			@else
+				XSTAT_ENTRIES( fstat64, int, struct stat64, _fxstat, 3, struct stat *)
+			@endif
+		@else
+			@ifndef SKIP_STAT64
+				PLAIN64_SWITCH( fstat64, "fstat64", "bypass_agent_action_fstat", int, struct stat64, char * )
+				PLAIN_ENTRIES( fstat64, int, struct stat64 )
+			@endif
+		@endif
+	}}
+	;
+
+#endif
+
+options "execve"
+also {{
+
+	extern char **environ;
+
+// PZK 10/26/06: removed use of list_copy
+	static int vexecle( int use_env, const char *path, const char *arg, va_list list )
+	{
+        char **argv;
+        char **envp;
+        int result;
+        int count = 256;
+        int i = 1;
+
+        argv = (char **) malloc(sizeof(char *) * count);
+        while (argv) {
+            argv[i] = va_arg(list, char *);
+            if (!argv[i]) break;
+            if (++i == count) {
+                count += 256;
+                argv = (char **) realloc(argv, sizeof(char *) * count);
+            }
+        }
+
+        if (argv) {
+            // PZK 8/28/07: fixed missing argv[0]
+            argv[0] = (char *) arg;
+            if (use_env) {
+                envp = va_arg(list, char **);
+            } else {
+                envp = environ;
+            }
+            result = execve(path, argv, envp);
+            free(argv);
+        } else {
+            result = -1;
+        }
+
+        return result;
+	}
+
+	extern "C" int execl( const char *path, const char *arg, ... )
+	{
+		va_list args;
+		va_start(args,arg);
+		return vexecle(0,path,arg,args);
+		va_end(args);
+	}
+
+	extern "C" int _execl( const char *path, const char *arg, ... )
+	{
+		va_list args;
+		va_start(args,arg);
+		return vexecle(0,path,arg,args);
+		va_end(args);
+	}
+
+	extern "C" int __execl( const char *path, const char *arg, ... )
+	{
+		va_list args;
+		va_start(args,arg);
+		return vexecle(0,path,arg,args);
+		va_end(args);
+	}
+
+	extern "C" int __libc_execl( const char *path, const char *arg, ... )
+	{
+		va_list args;
+		va_start(args,arg);
+		return vexecle(0,path,arg,args);
+		va_end(args);
+	}
+
+	extern "C" int execle( const char *path, const char *arg, ... )
+	{
+		va_list args;
+		va_start(args,arg);
+		return vexecle(1,path,arg,args);
+		va_end(args);
+	}
+
+	extern "C" int _execle( const char *path, const char *arg, ... )
+	{
+		va_list args;
+		va_start(args,arg);
+		return vexecle(1,path,arg,args);
+		va_end(args);
+	}
+
+	extern "C" int __execle( const char *path, const char *arg, ... )
+	{
+		va_list args;
+		va_start(args,arg);
+		return vexecle(1,path,arg,args);
+		va_end(args);
+	}
+
+	extern "C" int __libc_execle( const char *path, const char *arg, ... )
+	{
+		va_list args;
+		va_start(args,arg);
+		return vexecle(1,path,arg,args);
+		va_end(args);
+	}
+
+	extern "C" int execv( const char *path, char * const * argv )
+	{
+		return execve(path,argv,environ);
+	}
+
+	extern "C" int _execv( const char *path, char * const * argv )
+	{
+		return execve(path,argv,environ);
+	}
+
+	extern "C" int __execv( const char *path, char * const * argv )
+	{
+		return execve(path,argv,environ);
+	}
+
+	extern "C" int __libc_execv( const char *path, char * const * argv )
+	{
+		return execve(path,argv,environ);
+	}
+}};
+
+/* In Solaris, the BSD socket functions are implemented on top of a different set of system calls.  So, all socket related calls are directed to libsocket. */
+
+#ifdef sun
+options "socket" libcall library "/lib/libsocket";
+options "recvmsg" libcall library "/lib/libsocket";
+options "sendmsg" libcall library "/lib/libsocket";
+options "recvfrom" libcall library "/lib/libsocket";
+options "accept" libcall library "/lib/libsocket";
+options "getpeername" libcall library "/lib/libsocket";
+options "getsockname" libcall library "/lib/libsocket";
+options "connect" libcall library "/lib/libsocket";
+options "send" libcall library "/lib/libsocket";
+options "recv" libcall library "/lib/libsocket";
+options "bind" libcall library "/lib/libsocket";
+options "listen" libcall library "/lib/libsocket";
+options "sendto" libcall library "/lib/libsocket";
+options "shutdown" libcall library "/lib/libsocket";
+options "socketpair" libcall library "/lib/libsocket";
+options "getsockopt" libcall library "/lib/libsocket";
+options "setsockopt" libcall library "/lib/libsocket";
+#endif
+
+// PZK 5/10/06: add execlp and execvP implicitly when execvp intercepted
+// PZK 10/26/06: removed use of list_copy
+options "execvp" also {{
+    static int vexeclp(const char *file, const char *arg, va_list list) {
+        char **argv;
+        int result;
+        int count = 256;
+        int i = 0;
+
+        argv = (char **) malloc(sizeof(char *) * count);
+        while (argv) {
+            argv[i] = va_arg(list, char *);
+            if (!argv[i]) break;
+            if (++i == count) {
+                count += 256;
+                argv = (char **) realloc(argv, sizeof(char *) * count);
+            }
+        }
+
+        if (argv) {
+            // PZK 8/28/07: fixed missing argv[0]
+            argv[0] = (char *) arg;
+            result = execvp(file, argv);
+            free(argv);
+        } else {
+            result = -1;
+        }
+
+        return result;
+    }
+
+    extern "C" int execlp(const char *file, const char *arg, ...) {
+        va_list args;
+        va_start(args, arg);
+        return vexeclp(file, arg, args);
+        va_end(args);
+    }
+
+    extern "C" int _execlp(const char *file, const char *arg, ...) {
+        va_list args;
+        va_start(args, arg);
+        return vexeclp(file, arg, args);
+        va_end(args);
+    }
+
+    extern "C" int __execlp(const char *file, const char *arg, ...) {
+        va_list args;
+        va_start(args, arg);
+        return vexeclp(file, arg, args);
+        va_end(args);
+    }
+
+    extern "C" int __libc_execlp(const char *file, const char *arg, ...) {
+        va_list args;
+        va_start(args, arg);
+        return vexeclp(file, arg, args);
+        va_end(args);
+    }
+
+    @include <assert.h>
+
+    static int vexecvP(const char *file, const char *search_path,
+            char* const *argv) {
+        if (search_path != NULL) {
+            char *path = (char *) alloca(strlen(search_path) + 6);
+            // make sure any changes below are reflected in the 6 above
+            sprintf(path, "PATH=%s", search_path);
+            putenv(path);
+        }
+        return execvp(file, argv);
+    }
+
+    extern "C" int execvP(const char *file, const char *search_path,
+            char* const *argv) {
+        return vexecvP(file, search_path, argv);
+    }
+
+    extern "C" int _execvP(const char *file, const char *search_path,
+            char* const *argv) {
+        return vexecvP(file, search_path, argv);
+    }
+
+    extern "C" int __execvP(const char *file, const char *search_path,
+            char* const *argv) {
+        return vexecvP(file, search_path, argv);
+    }
+
+    extern "C" int __libc_execvP(const char *file, const char *search_path,
+            char* const *argv) {
+        return vexecvP(file, search_path, argv);
+    }
+}};

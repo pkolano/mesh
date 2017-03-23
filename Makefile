@@ -10,25 +10,13 @@ clean:
 distclean: clean
 	rm -f Makefile.config
 	cd bypass; make distclean
-	cd ../bypass; make realclean
-
-dist:
-	mkdir ../mesh-$(VERSION)
-	cp -r ../bypass ../mesh-$(VERSION)
-	cp -r ../mesh ../mesh-$(VERSION)
-	echo 'Go to mesh directory and read "README"' >../mesh-$(VERSION)/README
-	rm -f ../mesh-$(VERSION)/bypass/.todo
-	rm -f ../mesh-$(VERSION)/mesh/.todo
-	find ../mesh-$(VERSION) -d -name CVS -exec rm -rf {} \;
-	cd .. && tar zcvf mesh-$(VERSION).tgz mesh-$(VERSION)
-	rm -rf ../mesh-$(VERSION)
+	cd bypass_src; make realclean
 
 
 #############################################################
 #### DO NOT DIRECTLY INVOKE ANY TARGETS BELOW THIS POINT ####
 #############################################################
 
-VERSION = 1.5
 MP_BIN = mc mesh-getmp mesh-keygen mesh-keykill mesh-keytime mesh-setmp \
          mesh-update
 MP_SBIN = mesh-logstats
@@ -37,7 +25,7 @@ MAP_SBIN = mesh-logstats
 MASH_LIB = Command.pm Policy.pm Proxy.pm Proxy/None.pm Proxy/Ssh.pm \
            Rule/Argument.pm Rule/Connection.pm Rule/Environment.pm \
            Rule/Group.pm Rule/Option.pm Rule/User.pm
-.PHONY = all install clean distclean root dist \
+.PHONY = all install clean distclean root \
          prefix extra_prefix \
          mp mp_install \
          map map_install \
@@ -61,7 +49,7 @@ resource: mia
 mess: mia
 
 mia:
-	cd ../bypass; make
+	cd bypass_src; make
 	cd bypass; make
 
 
@@ -74,7 +62,7 @@ root:
 
 prefix:
 	install -d -g root -m 0755 -o root /etc/mesh $(PREFIX)
-	cd $(PREFIX); install -d -g root -m 0755 -o root bin lib sbin var
+	cd $(PREFIX); install -d -g root -m 0755 -o root bin lib sbin
 	test -f /etc/mesh/mesh.conf || install -g root -m 0644 -o root etc/mesh.conf /etc/mesh/mesh.conf
 
 mp_install: mash_install mia_install extra_prefix
@@ -108,6 +96,7 @@ mia_install:
 
 extra_prefix:
 	grep ^$(GROUP): /etc/group
+	install -d -g root -m 0755 -o root $(PREFIX)var
 	install -d -g $(GROUP) -m 0750 -o root /etc/mesh/mapkeys
 	install -d -g $(GROUP) -m 1753 -o root $(PREFIX)var/meshkeys
 	install -d -g root -m 1753 -o root $(PREFIX)var/meshmps

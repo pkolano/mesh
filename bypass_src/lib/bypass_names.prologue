@@ -1,0 +1,11 @@
+/*
+Bypass
+Copyright (C) 1999-2001 Douglas Thain
+http://www.cs.wisc.edu/condor/bypass
+This program is released under a BSD License.
+See the file COPYING for details.
+*/
+
+// PZK 11/3/11: changed return to const to avoid warnings
+static const char * bypass_call_name_table[] = {
+

@@ -1,0 +1,215 @@
+#!/bin/sh
+
+. ./configure.tools
+
+save_arguments $0 $@
+
+project="Bypass"
+ldflags="-L../src"
+# PZK 4/4/06: removed gcc specific options
+# PZK 5/25/06: moved PIC down below
+ccflags="-g -I../src -D_REENTRANT"
+libsuffix=".so"
+
+install_dir="/usr/local"
+
+echo "configuring $project..."
+
+IFS=" ="
+export IFS
+
+while [ $# -gt 0 ]
+do
+	case $1 in
+		--prefix)
+			shift
+			install_dir=$1
+			;;
+		-h | -help | --h | --help)
+			cat <<EOF
+Use: configure [options]
+Where options are:
+ --prefix                The directory in which to install $project
+EOF
+			exit 1
+			;;
+		*)
+			echo "Unknown argument $1"
+			exit 1
+			;;
+	esac
+	shift
+done
+
+IFS=" "
+export IFS
+
+rm -f Makefile.config
+
+if opsys=`uname -s`
+then
+	echo "Operating system is $opsys"
+else
+	echo "ERROR: Can't find the 'uname' program!"
+	exit -1
+fi
+
+if version=`uname -r`
+then
+	echo "Version is $version"
+else
+	echo "ERROR: Can't find the 'uname' program!"
+	exit -1
+fi
+
+threadflags=""
+
+case $opsys in
+	SunOS*)
+		case $version in
+			5.5.1)	;;
+			5.6)	;;
+			5.7)	;;
+			5.8)	;;
+			*)	echo "*** WARNING: Bypass has not been tested on $opsys $version."
+				;;
+		esac
+		;;
+	Linux*)
+		case $version in
+			2.0*)	;;
+			2.1*)	;;
+			2.2*)	;;
+			2.3*)	;;
+			2.4*)	;;
+			*)	echo "*** WARNING: Bypass has not been tested on $opsys $version."
+				;;
+		esac
+		;;
+	IRIX*)
+		case $version in
+			6.2)	;;
+			6.5)	;;
+			*)	echo "*** WARNING: Bypass has not been tested on $opsys $version."
+				;;
+			esac
+		;;
+	OSF1*)
+		case $version in
+			V4.0)	;;
+			*)	echo "*** WARNING: Bypass has not been tested on $opsys $version"
+				;;
+			esac
+		;;
+	*)
+		echo "*** WARNING: Bypass has not been ported to any version of $opsys."
+		echo "*** WARNING: Guessing library suffix is $libsuffix."
+		;;
+esac
+
+echo "checking for improper installation..."
+
+if [ -f $install_dir/src/main.c ]
+then
+	echo "*** ERROR: You should install in a fresh directory, not in the source directory."
+	exit 1
+else
+	echo "Installing in $install_dir"
+fi
+
+# PZK 4/4/06: require cc/CC for irix, gcc/g++ otherwise
+# PZK 5/25/06: cc uses different PIC option than gcc
+case $opsys in
+    IRIX*)
+        require_path "c99"
+        require_path "CC"
+        cc="c99"
+        cxx="CC"
+        libdir="/lib32"
+        ccflags="${ccflags} -KPIC"
+        ;;
+    *)
+        require_path "gcc"
+        require_path "g++"
+        cc="gcc"
+        cxx="g++"
+        libdir="/lib"
+        ccflags="${ccflags} -fPIC"
+        ;;
+esac
+
+# PZK 4/6/06: set libc location
+# PZK 1/6/15: added additional libc locations for 32/64-bit and multiarch
+libc=`ls -1 ${libdir}*/libc.so* 2>/dev/null |tail -1`
+if [ -z $libc ]; then libc=`ls -1 /usr${libdir}*/libc.so* 2>/dev/null |tail -1`; fi
+if [ -z $libc ]; then libc=`ls -1 ${libdir}/*/libc.so* 2>/dev/null |tail -1`; fi
+if [ -z $libc ]; then echo "*** ERROR: Can't find libc!"; exit 1; fi
+libc=`basename ${libc}`
+ccflags="${ccflags} -DBACKUP_LIBRARY=\"\\\"${libc}\\\"\""
+
+require_path "flex"
+require_path "bison"
+require_path "perl"
+require_path "install"
+
+require_gnu_make
+
+# PZK 4/4/06: add xlinker for non-irix
+case $opsys in
+    IRIX*)
+        ;;
+    *)
+        ldflags="${ldflags} -Xlinker"
+        ;;
+esac
+ldflags="${ldflags} -Bdynamic"
+
+if [ $opsys = "Linux" ]
+then
+	optional_library pthread USE_PTHREADS
+else
+	echo "Threading not supported on $opsys"
+fi
+ 
+optional_library socket  HAS_LIBSOCKET
+optional_library nsl     HAS_LIBNSL
+optional_library xnet    HAS_LIBXNET
+optional_library dl      HAS_LIBDL
+optional_library dld     HAS_LIBDLD
+
+echo "creating Makefile.config..."
+
+# PZK 5/25/06: added make definition
+cat <<EOF >Makefile.config
+
+INSTALL_DIR = ${install_dir}
+
+MAKE=${make}
+
+CC=${cc}
+CCFLAGS=${ccflags}
+
+CXX=${cxx}
+CXXFLAGS=${ccflags}
+
+LEX=flex
+LEXFLAGS=
+
+YACC=bison
+YACCFLAGS=
+
+LD=${cxx}
+LDFLAGS=${ldflags}
+
+MAKELIB=${cxx}
+MAKELIBFLAGS=${ldflags} -shared
+
+AR=ar
+ARFLAGS=
+
+BYPASS=BYPASS_LIBRARY_DIR=../lib ../src/bypass
+BYPASSFLAGS=
+
+EOF
+
+exit 0

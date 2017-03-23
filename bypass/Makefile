@@ -1,7 +1,7 @@
 -include ../Makefile.config
 -include Makefile.config
 
-BYPASS_DIR=../../bypass
+BYPASS_DIR=../bypass_src
 BYPASS=BYPASS_LIBRARY_DIR=${BYPASS_DIR}/lib ${BYPASS_DIR}/src/bypass
 BYPASSFLAGS=
 

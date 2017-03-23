@@ -1,0 +1,40 @@
+/*
+Bypass
+Copyright (C) 1999-2001 Douglas Thain
+http://www.cs.wisc.edu/condor/bypass
+This program is released under a BSD License.
+See the file COPYING for details.
+*/
+
+#include "network.h"
+#include "packet.h"
+#include "external.h"
+#include "external_unix.h"
+#include "pattern.h"
+#include "auth.h"
+
+#define TRY(x) if(!(x)) goto fail;
+
+extern "C" int bypass_receive_call( int bypass_fd )
+{
+	int	bypass_errno = 0;
+	int 	bypass_number = 0;
+
+	struct packet *bypass_packet, *bypass_response;
+
+	bypass_packet = packet_get(bypass_fd);
+	if(!bypass_packet) return -1;
+
+	bypass_response = packet_create(0);
+	if(!bypass_response) {
+		packet_delete(bypass_packet);
+		return -1;
+	}
+
+	if(!external(bypass_packet,EXTERNAL_IN,&bypass_number)) goto fail;
+
+	switch(bypass_number) {
+
+
+
+

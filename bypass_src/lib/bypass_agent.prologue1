@@ -1,0 +1,49 @@
+/*
+Bypass
+Copyright (C) 1999-2001 Douglas Thain
+http://www.cs.wisc.edu/condor/bypass
+This program is released under a BSD License.
+See the file COPYING for details.
+*/
+
+extern "C" {
+#include <stdarg.h>
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+#include <stdlib.h>
+#include <dlfcn.h>
+
+#include <fcntl.h>
+#include <unistd.h>
+#include <dirent.h>
+#include <signal.h>
+
+#include <sys/stat.h>
+#include <sys/poll.h>
+#include <sys/socket.h>
+}
+
+#include "hashtable.h"
+#include "layer.h"
+#include "network.h"
+#include "packet.h"
+#include "external.h"
+#include "external_unix.h"
+#include "auth.h"
+#include "private_malloc.h"
+
+#ifdef linux
+	extern "C" long syscall( long num, ... );
+#else
+	extern "C" int syscall( int num, ... );
+#endif
+
+#ifndef sgi
+	#include <sys/syscall.h>
+#else
+	#include <sys.s>
+#endif
+
+/* macros should be outlawed */
+#undef rewinddir

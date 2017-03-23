@@ -1,0 +1,763 @@
+<html>
+
+<head>
+<title>Bypass Manual</title>
+</head>
+
+<body bgcolor="white">
+
+<h1>Bypass Manual</h1>
+
+<b>Release 2.5.3 7-August-2002</b>
+
+<a name=frontmatter> <h2> Front Matter </h2> </a>
+
+Bypass is Copyright (C) 1999-2002 Douglas Thain.
+<p>
+This software is released under the BSD License.  Please see the file COPYING for more details.
+<p>
+This manual may be out of date.  Please check the <a href=http://www.cs.wisc.edu/condor/bypass>Bypass Web Page</a> for the most recent version.
+
+<h2>Table of contents</h2>
+
+<dir>
+<li> <a href=#overview>Overview</a>
+<li> <a href=#getting_started>Getting started</a>
+<li> <a href=#beginning_example>Beginning Example</a>
+	<dir>
+	<li> <a href=#writing_an_agent>Writing an Agent</a>
+	<li> <a href=#building_an_agent>Building an Agent</a>
+	<li> <a href=#injecting_an_agent>Injecting an Agent</a>
+	</dir>
+<li> <a href=#layering_agents>Layering Agents</a>
+	<dir>
+	<li> <a href=#example_of_layering>Example of Layering</a>
+	<li> <a href=#layering_rules>Layering Rules</a>
+	<li> <a href=#layer_order_matters>Layer Order Matters</a>
+	</dir>
+<li> <a href=#split_execution_systems>Split Execution Systems</a>
+	<dir>
+	<li> <a href=#remote_io_system>Remote I/O System</a>
+	<li> <a href=#using_split_execution>Using Split Execution Systems</a>
+	<li> <a href=#controlled_io_system>Controlled I/O System</a>
+	<li> <a href=#shadow_options>Shadow Options</a>
+	<li> <a href=#shadow_options>Security</a>
+	</dir>
+<li> <a href=#notes_for_wizards>Notes for Wizards</a>
+<li> <a href=#frequently_asked_questions>Frequently Asked Questions</a>
+</dir>
+
+<hr>
+
+<a name=overview><h2> Overview </h2></a>
+
+Bypass is a tool for writing <i>interposition agents</i>.
+<p>
+An interposition agent is a small piece of software which transforms a program's operation by placing itself between the program and the operating system.  When the program attempts certain system calls, the agent grabs control and manipulates the results.
+<p>
+Interposition agents can be used for many reasons:
+<dir>
+<li> To measure and debug a program.
+<li> To give new capabilities to an old program.
+<li> To attach programs to new storage systems.
+<li> To emulate one system while using another.
+</dir>
+<p>
+An interposition agent created by Bypass can be added to (nearly) any UNIX program at run-time.  The receiving program must be dynamically-linked, but it need not otherwise be specially prepared for Bypass.  Agents created by Bypass have been used with unmodified system tools such as <code>cp</code>, <code>grep</code>, and <code>emacs</code>.
+<p>
+Bypass is a code generator, much like the compiler tools <code>yacc</code> and <code>bison</code>.  The programmer provides a specification which lists what system calls are to be trapped and what code is to replace them.  Bypass parses the specification and produces C++ source for an agent which implements the programmer's intentions.
+<p>
+Writing interposition agents from scratch is tricky -- each operating system implements its systems calls in a slightly different manner, so writing portable code to trap them is quite difficult.  Bypass hides the programmer from all these unfortunate details.
+<p>
+In addition to building interposition agents, Bypass can also build <i>split execution</i> systems.  A split execution system consists of a matched interposition agent and a <i>shadow process</i>.  The interposition agent attaches to a program, traps its system calls, and sends them back to another machine, where the shadow process executes them and returns the results.  Under this arrangment, a program can run on any networked machine and yet execute exactly as if it were running on the same machine as the shadow.
+<p>
+This manual describes how to accomplish all of these things using Bypass.  We will begin with a simple interposition agent that measures a program's I/O behavior, proceed through several agents which work with external storage systems, and conclude with two simple split execution systems.
+<p>
+Bypass was created by Douglas Thain at the University of Wisconsin.  Rajesh Rajamani and Francesco Prelz made valuable contributions to the multithreaded feature.  Massimo Sgaravatto was an early and brave debugger.  Thank you!
+<p>
+For more information about Bypass, please contact:
+<p>
+The Bypass Web Site<br>
+<a href=http://www.cs.wisc.edu/condor/bypass>http://www.cs.wisc.edu/condor/bypass</a>
+<p>
+Douglas Thain<br>
+<a href=mailto:thain@cs.wisc.edu>thain@cs.wisc.edu</a><br>
+<A href=http://www.cs.wisc.edu/~thain>http://www.cs.wisc.edu/~thain</a><br>
+<p>
+Miron Livny<br>
+<a href=mailto:miron@cs.wisc.edu>miron@cs.wisc.edu</a><br>
+<a href=http://www.cs.wisc.edu/~miron>http://www.cs.wisc.edu/~miron</a><br>
+<p>
+The Condor Team<br>
+<a href=mailto:condor-admin@cs.wisc.edu>condor-admin@cs.wisc.edu</a><br>
+<a href=http://www.cs.wisc.edu/condor>http://www.cs.wisc.edu/condor</a><br>
+<p>
+Computer Sciences Department<br>
+University of Wisconsin<br>
+1210 W. Dayton St.<br>
+Madison WI 53706<br>
+
+<hr>
+
+<a name=getting_started>
+<h2> Getting started </h2>
+</a>
+
+To begin, unpack the Bypass distribution into a scratch directory, and run the <code>configure</code> program.  Here is an example of install Bypass in <code>/home/fred/bypass</code> using the C-Shell:
+<dir>
+<pre>
+% cd /tmp
+% gunzip bypass.tar.gz
+% tar xvf bypass.tar
+% cd bypass
+% ./configure --prefix /home/fred/bypass
+</pre>
+</dir>
+<p>
+Bypass runs on a variety of UNIX-like operating systems.  If you attempt to run Bypass on an operating system we have not tested, you will be given a warning, but the configuration process will attempt to go ahead.  Please understand that Bypass deals with many system-specific low-level details, and we don't expect it will run out of the box with every new operating system.  If you try Bypass on a new operating system, we would be happy to hear of your results.
+<p>
+Bypass has run on the following systems:
+<dir>
+<li> SPARC Solaris 2.5.1, 2.7, 2.8
+<li> Intel Solaris 2.6
+<li> Intel Linux 2.0, 2.2 with GNU libc
+<li> Intel Linux 2.0 with libc5
+<li> MIPS IRIX 6.2, 6.5
+<li> Alpha OSF/1 4.0
+</dir>
+<p>
+Bypass requires the tools gcc, g++, bison, flex, make, and perl.  The configuration process will check to make sure you have these tools in your path.  If you do not have them, you can get them from the <a href=http://www.fsf.org>Free Software Foundation</a>.
+<p>
+A number of example programs are distributed with Bypass.  Some of them make use of other software packages such as Globus, and SRB.  If you have these packages, you may add them with options to <code>configure</code> like so:
+<p>
+<pre>
+./configure --prefix /home/fred/bypass --with-srb-path /usr/local/srb
+</pre>
+Bypass will work fine without these optional packages, but some of the example programs will not be built.
+<p>
+After configuring, build the software, add the <code>bin</code> directory to your path, and set the <code>BYPASS_LIBRARY_DIR</code> variable to point to the <code>lib</code> directory.  Here is an example of building Bypass using the C-Shell:
+<dir>
+<pre>
+ % make
+ % make install
+ % setenv PATH ${PATH}:/home/fred/bypass/bin
+ % setenv BYPASS_LIBRARY_DIR /home/fred/bypass/lib
+</pre>
+</dir>
+
+<a name=beginning_example>
+<h2> Beginning Example </h2>
+</a>
+
+This beginning example was automatically built for you as <code>examples/info_agent.so</code>.  If you would like to try this example out, skip right to the section on <a href=#injecting_an_agent>injecting an agent</a>.  Come back to this section when you would like to learn how to write and build agents.
+
+<a name=writing_an_agent>
+<h3> Writing an Agent </h3>
+</a>
+This first example, <a href=../examples/info.bypass>info.bypass</a>, is a simple agent which measures the I/O performed by an application.  It traps the <code>read</code> and <code>write</code> system calls to count how many bytes each uses, and traps the <code>exit</code> system call to display a summary message as the program exits.  Each trapped system call must be declared and then followed by the code to execute in its place.
+<p>
+The <code>agent_prologue</code> section is optional, and contains any header code required by the user-written code that follows.  This prologue in this example includes the standard I/O interface, and declares two variables to keep track of the number of bytes transferred.
+<p>
+<table>
+<tr>
+<td bgcolor=#aaaaff>
+Note:
+<tr>
+<td bgcolor=#aaaaaa>
+If you use any preprocessor commands in this section, then you must replace the <code>#</code>s with <code>@</code>s.  For example, <code>#include</code> becomes <code>@include</code>, and <code>#define</code> becomes <code>@define</code>.
+</table>
+<p>
+Each procedure declaration looks very much like a C procedure declaration: there must be a return value, a name, and the formal parameters.  Next comes the <code>agent_action</code> keyword, and some C++ code delimted by double braces.  A semicolon ends the declaration.
+<p>
+The declaration names what system call is to be replaced and gives the code that is to take its place.  The code may be any arbitrary C++ fragment -- it may compute values, use parameters, or even invoke the replaced procedure.  Notice in the example above that the new definition of <code>read</code> invokes the original <code>read</code> and then stores the result before returning.
+<p>
+<a name=building_an_agent>
+<h2>Building an Agent</h2>
+</a>
+Once you have written a specification, run Bypass to generate source code.   Bypass will create a header file and a C++ source file with <code>_agent</code> appended.  <br><b><u>NOTE:</u> If you want to use threaded agents or threaded applications, you'll have to compile with the -DUSE_PTHREADS flag. </b> 
+<dir>
+<pre>
+% bypass -agent info.bypass  
+</pre>
+</dir>
+Compile the source into an object file.  You will need to use the <code>-fPIC</code> flag to make sure the object contains <a href=#position_independent_code>position independent code</a>.
+<dir>
+<pre>
+% g++ -fPIC -g -I/home/fred/bypass/include -c info_agent.C -o info_agent.o
+</pre>
+</dir>
+<b> For using threaded agents or applications, compile it as:</b>
+<br><br>
+<dir>
+<pre>
+% g++ -fPIC -g -I/home/fred/bypass/include -c -DUSE_PTHREADS info_agent.C -o info_agent.o
+</pre>
+</dir>
+
+Finally, convert the object file into a shared library. This process is slightly different on each platform.  You may have to experiment with the linker flags to get correct results.  Here are some examples:
+<p>
+On Linux or Solaris:
+<dir>
+<pre>
+% g++ -shared info_agent.o -o info_agent.so -L/home/fred/bypass/lib -lbypass -ldl
+</pre>
+</dir>
+On OSF/1 or IRIX:
+<dir>
+<pre>
+% g++ -shared info_agent.o -o info_agent.so -L/home/fred/bypass/lib -lbypass
+</pre>
+</dir>
+
+<a name=injecting_an_agent>
+<h2>Injecting an Agent</h2>
+</a>
+<table>
+<tr>
+<td bgcolor=#aaaaff>
+Note:
+<tr>
+<td bgcolor=#aaaaaa>
+There are many esoteric operating system errors that you may encounter in this section.  If these instructions don't work for you, please consult the <a href=#frequently_asked_questions>frequently asked questions</a>.
+</table>
+<p>
+To inject an agent into a program, we will instruct the linker to load the agent as a shared library before any other libraries are referenced.  This is done on most platforms by setting an environment variable.  Again, this process is slightly different on each platform.  Here are some examples:
+<p>
+On Linux or Solaris:
+<dir>
+<pre>
+% setenv LD_PRELOAD /path/to/info_agent.so
+</pre>
+</dir>
+On OSF/1 or IRIX:
+<dir>
+<pre>
+% setenv _RLD_LIST /path/to/info_agent.so:DEFAULT
+</pre>
+</dir>
+<p>
+Now, run any old command that you like -- try something as simple as <code>ls -l</code>:
+<dir>
+<pre>
+% ls -l
+
+total 28
+drwxr-xr-x   2 thain    23330        2048 Apr 11 14:03 CVS
+-rw-r--r--   1 thain    23330         382 Apr 13 13:35 Makefile
+-rw-r--r--   1 thain    23330         679 Apr 13 13:35 Makefile.config
+-rw-r--r--   1 thain    23330         382 Apr  7 10:35 Makefile.template
+-rw-r--r--   1 thain    23330        2363 Apr 11 13:42 README
+drwxr-xr-x   3 thain    23330        2048 Apr 13 13:35 bin
+-rwxr-xr-x   1 thain    23330        5600 Apr  9 19:54 configure
+drwxr-xr-x   3 thain    23330        2048 Apr 13 13:31 doc
+drwxr-xr-x   3 thain    23330        4096 Apr 13 13:35 examples
+drwxr-xr-x   3 thain    23330        2048 Apr 11 13:25 lib
+drwxr-xr-x   3 thain    23330        4096 Apr 13 13:35 src
+NOTICE: process 5657: 297267 bytes read, 703 bytes written
+</pre>
+</dir>
+<p>
+Notice that the program ran as normal, but the interposition agent counted up all the I/O performed and displayed a message just as the application ended.  Go ahead and try more complicated programs such as <code>emacs</code> or <code>netscape</code>.  You should see results for these programs as well.
+<p>
+To return to normal operation, simply unset the environment variable:
+<p>
+On Linux or Solaris:
+<dir>
+<pre>
+% unsetenv LD_PRELOAD
+</pre>
+</dir>
+On OSF/1 or IRIX:
+<dir>
+<pre>
+% unsetenv _RLD_LIST
+</pre>
+</dir>
+
+<a name=layering_agents>
+<h2>Layering Agents</h2>
+</a>
+
+<a name=example_of_layering>
+<h3>Example of Layering</h3>
+</a>
+
+Several agents may be applied to a single program at once.  This yields a stack of software components, with each component called a <i>layer</i>. The topmost layer is the application, and the bottommost layer is the standard library.  In between are zero or more agent layers.  To apply several agents at once to a program, just list them one by one in the preloading command.  For example, to apply both the <a href=http://www.cs.wisc.edu/condor/bypass/examples/automatic-gass>Automatic GASS</a> and measurement layers to a single program, do this:
+<dir>
+<pre>
+% setenv LD_PRELOAD "/path/to/auto_gass_agent.so /path/to/info_agent.so"
+</pre>
+</dir>
+
+<a name=layering_rules>
+<h3>Layering Rules</h3>
+</a>
+
+In a program composed of multiple layers, there can be many definitions of and references to a single procedure name.  In most programs, this constitutes an error, but in Bypass it is normal.  We must carefully define some rules which describe the exact binding of names between layers.
+
+<ol>
+<li> A process keeps track of its <i>active layer</i> in a global variable.  A process begins execution with the top layer active.
+<li>A call to a trapped procedure name selects the definition in the layer immediately below the active layer.  If none is present, the next layer below is searched, and so on.
+<li>After selecting but before invoking a trapped procedure, the active layer is lowered to that of the selected definition.  Before returning, the active layer is restored to its previous value.
+<li> A call to a non-trapped procedure does not consult or affect the active layer.  Such calls are bound according to the normal linking policy of the operating system.
+</ol>
+
+<a name=layer_order_matters>
+<h3>Layer Order Matters</h3>
+</a>
+
+An extensive discussion of layering and its consequences can be found in our <a href=http://www.cs.wisc.edu/condor/bypass>published papers</a>.  However, it is important to at least note here that the ordering of layers matters.
+<p>
+For example, the measurement layer may be placed above or below the Automatic GASS layer.  If above, the measurement layer will only record those operations actually attempted by the application.  If below, the measurement layer will record all operations performed by the combination of the application and the Automatic GASS layer, including any <tt>read</tt>s or <tt>write</tt>s necessary to implement <tt>globus_gass_open</tt>.  You might want to have both -- one above, and one below.  however, if you do this, you must make a separate copy for each instance of the agent, otherwise two copies of the code will share the internal data structures.  To combine two measurement agents with the Automatic GASS agent, you might do this:
+<dir>
+<pre>
+% cp info_agent.so top_agent.so
+% setenv LD_PRELOAD "/path/to/top_agent.so /path/to/auto_gass_agent.so /path/to/info_agent.so"
+</pre>
+</dir>
+
+<a name=split_execution_systems>
+<h2>Split Execution Systems</h2>
+</a>
+
+Bypass can be used to build split execution systems.  As the name implies, such a system splits a program's execution between two machines.  An application runs on a remote machine while an interposition agent traps some of its system calls.  It sends some of those system calls via RPC back to a shadow process which runs in the user's home environment.  The shadow performs the system calls and sends the results back to the agent and application. This system allows a process running on a remote machine to behave as if it were running on the user's home machine. 
+<p>
+We will give two examples of split execution systems built using Bypass.  The first simply sends the standard I/O operations without modification.  The second prevents access to particular files and logs a message for each file opened.
+<p>
+<a name=remote_io_system>
+<h3>Remote I/O System</h3>
+</a>
+This example, <a href=../examples/io.bypass>io.bypass</a>, is a simple split execution system which traps and forwards the standard UNIX I/O operations.  It should already be built for you in the <code>examples</code> directory.
+<p>
+Notice that no <code>agent_action</code> or <code>shadow_action</code> is given for any of the procedures.  When no action is given, the default is for the agent to send the call via RPC to the shadow, which then invokes the procedure normally.
+<p>
+Notice also that some annotations have been made to the parameters of open, read, and write.  These three procedures have pointer arguments.  Pointers are a bit tricky because they refer to some large, variable size amount of  data.  Bypass must be informed of what direction pointer data must move, and how much data is to be transferred.
+<p>
+The parameter <code>name</code> is given to <code>open</code> to determine what file to open.  We know that open will not send back any data when it completes, so we determine that the <code>name</code> data only flows <code>in</code> to the procedure.  The parameter is a null-terminated string, which is indicated by the keyword "string". 
+<p>
+Every pointer argument must be prefixed with <code>in</code>, <code>out</code>, or <code>in out</code>, to describe which way data flows.  <code>in</code> indicates data flows from the agent to the shadow, while <code>out</code> indicates data flow from the shadow to the agent  Following <code>in</code> or <code>out</code> may be a number of additional constructs:
+<dir>
+<li> <code><b>string</b></code> indicates this parameter points to a null-terminated string.  Data up to and including the terminator will be transferred.  A string may also be an <code>out</code> parameter, but then the keyword string must be followed by a quoted expression which must evaluate to the maximum number of bytes available to store the string.
+<li> <code><b>opaque "expr"</b></code> indicates this parameter points to opaque binary data.  <code>"expr"</code> is a C++ expression which must evaluate to the exact number of bytes to transfer.
+<li> <code><b>array "expr"</b></code> indicates this paramater points to an array of objects of the given type.  <code>"expr"</code> is a C++ expression which must evaluate to the number of objects to transfer.
+</dir>
+<p>
+<a name=using_split_execution>
+<h3>Using Split Execution Systems</h3>
+</a>
+To build a split execution system, run <code>bypass</code> with both the <code>-agent</code> and <code>-shadow</code> flags.  This time, three files will be written: <code>io_agent.C</code>, <code>io_shadow.C</code>, and <code>io.h</code>.
+<p>
+The agent must be compiled and linked against <code>libbypass.a</code>, which is found in the <code>lib</code> and <code>include</code> directories of the Bypass distribution.  If your platform requires particular libraries in order to use sockets (shown in <font color=red>red</font>), make sure to link against those, too.
+<p>
+<dir>
+<pre>
+% bypass -agent -shadow io.bypass
+% g++ -I/home/fred/bypass/include -c io_agent.C -o io_agent.o
+% g++ -shared io_agent.o -L/home/fred/bypass/lib -lbypass -o io_agent.so -ldl <font color=red>-lnsl -lsocket</font>
+</pre>
+</dir>
+<p>
+The shadow consists only of <code>io_shadow.C</code>.  It should be compiled into a standalone program and linked with <code>libbypass.a</code>.
+<p>
+<dir><pre>
+ %  g++ -I/home/fred/bypass/include -c io_shadow.C -o io_shadow.o
+ %  g++ io_shadow.o -L/home/fred/bypass/lib -lbypass -o io_shadow <font color=red>-lnsl -lsocket</font>
+</pre></dir>
+<p>
+To execute the program, the shadow must be started, and then the agent must be instructed where to find the shadow.
+<p>
+First, run the shadow with no arguments.  It will display a message indicating
+the host and port it is running on, and then it will wait for a agent
+to connect:
+<p>
+<dir><pre>
+%  ./io_shadow
+setenv BYPASS_SHADOW_HOST www.xxx.yyy.zzz
+setenv BYPASS_SHADOW_PORT pppp
+</pre></dir>
+<p>
+The agent must be told the host and port number of the shadow it is to connect to.  These are passed by way of environment variables. Handily, the shadow has printed them out in a format which is convenient for cutting and pasting.  Paste these into another window, and then run the agent as you normally would.
+<p>
+<dir><pre>
+% setenv BYPASS_SHADOW_HOST www.xxx.yyy.zzz
+% setenv BYPASS_SHADOW_PORT pppp
+% setenv LD_PRELOAD `pwd`/info_agent.so
+% cat /etc/passwd 
+bypass_agent: Getting configuration from environment...
+bypass_agent: Connecting to www.xxx.yyy.zzz port pppp...
+bypass_agent: Connection made.
+</pre></dir>
+<p>
+All the input and output for the program will be conducted in the <b>shadow</b> window:
+<p>
+<dir><pre>
+% ./io_shadow
+setenv BYPASS_SHADOW_HOST www.xxx.yyy.zzz
+setenv BYPASS_SHADOW_PORT pppp
+bypass_shadow: Waiting for connection...
+root:*:0:1:System Administration:/:/sbin/sh
+operator:*:5:5:System Backups:/u/o/p/operator:/bin/tcsh
+...
+</pre></dir>
+
+<a name=controlled_io_system>
+<h2> Controlled I/O System </h2>
+</a>
+
+This example, <a href=../examples/controlled_io.bypass>controlled_io.bypass</a>, is a split execution system which selectively controls what files an application can open.  It should already be built for you in the <code>examples</code> directory.
+<p>
+Each Bypass declaration involves an action on either (or both) the agent and shadow programs.  We have already seen code explicitly invoked on the agent side by a <code>agent_action</code> block.  We can also control the code executed on the shadow by specifying <code>shadow_action</code> blocks.  When no <code>agent_action</code> is given, the default is to invoke a remote procedure call.  When no <code>shadow_action</code> is given, the default is to invoke the procedure of the same name.  For example, this declaration:
+<p>
+<dir><pre>
+int open( in string const char *path, int flags, [int mode] );
+</pre></dir>
+<p>
+implies these actions:
+<p>
+<dir><pre>
+        agent_action
+        {{
+                return bypass_shadow_open( path, flags, mode );
+        }}
+        shadow_action
+        {{
+                return open( path, flags, mode );
+        }};
+</pre></dir>
+<p>
+We can explicitly specify these action blocks to create some very powerful code.  Let's modify <code>open</code> to create a simple sandbox.  If the user attempts to open a file not in the current directory (that is, it contains a slash,) we will return a permission error.  Otherwise, we will forward the request to the shadow, which will print out a brief notice and open the file.
+<p>
+<dir><pre>
+int open( in string const char *path, int flags, [int mode] )
+        agent_action
+        {{
+		if(strchr(path,'/')) {
+			printf("DENIED: agent tried to open %s\n",path);
+			errno = EPERM;
+			return -1;
+		} else {
+			return bypass_shadow_open(path,flags,mode);
+		}
+        }}
+        shadow_action
+        {{
+                printf("NOTICE: agent opened %s\n",path);
+                return open(path,flags,mode);
+        }};
+</pre></dir>
+
+<a name=shadow_options>
+<h2>Shadow Options</h2>
+</a>
+
+In the examples we have shown above, each program communicates through its agent to its own shadow, listening on a port known in advance.  By default, the shadow randomly selects an available port, displays it, and requires that the user inform the agent of the port:
+
+<pre>
+ % ./io_shadow
+setenv BYPASS_SHADOW_HOST www.xxx.yyy.zzz
+setenv BYPASS_SHADOW_PORT pppp
+...
+</pre>
+
+If multiple programs are to be run using the same split execution model, it may be more useful to have a server listening on a well-known port and forking off shadows for each incoming connection.  This is easily done with command line options to the shadow:
+
+<pre>
+ % ./io_shadow -port 50000 -multiprocess
+</pre>
+
+On the other hand, your application may not require that each program use a unique shadow process.  In this case, the shadow can listen on a well-known port and simply fork off a new thread for each connection.  (This option is only available if the pthread library was available at build time.)  For example:
+
+<pre>
+ % ./io_shadow -port 50000 -multithread
+</pre>
+
+Finally, the <tt>-debug</tt> option will display lots of information about each connection.
+
+<pre>
+ % ./io_shadow -debug
+</pre>
+
+<table>
+<tr>
+<td bgcolor=#aaaaff>
+Note:
+<tr>
+<td bgcolor=#aaaaaa>
+The multithreading option is only available on Linux and then only if the pthreads library can be found.  If you are building the examples in the Bypass package, the <code>configure</code> program will take care of finding and using the pthreads library.  If you are building your own software, you must compile the shadow with <code>-DUSE_PTHREADS</code> and direct the compiler and linker to the pthreads library by yourself.
+</table>
+
+<a name=security>
+<h2>Security</h2>
+</a>
+
+By default, a Bypass shadow will accept any incoming connection.  This is ok for a testing environment, but out of the question for production use.  Bypass splits such security concerns into two realms: <i>authentication</i> and <i>authorization</i>.  Authentication is the process of confirming the identity of the <i>subject</i>, or the name of the agent attempting to communicate.  Authorization is the process of determining which subjects are allowed to connect.
+<p>
+Two authentication methods are currently provided: Globus GSS and Trivial.  Globus GSS authentication is more secure, but requires the <a href=http://www.globus.org>Globus</a> software and appropriate certificates.  Trivial authentication is less secure, but has no special requirements.  Both the agent and the shadow may use one or both authentication methods -- when they connect, they will negotiate a mutually acceptable method.
+<p>
+Globus GSS authentication is the recommended authentication mechanism for Bypass.  If the Globus software was available when Bypass was built, then it is the default.  Globus GSS uses public/private key cryptography to identify the agent to the shadow.  The user running the agent is identified in human readable form as an X.509 subject, which looks something like:
+<p>
+<dir><pre>
+/C=US/O=Bedrock Township/OU=Construction Services/CN=Fred Flintstone
+</pre></dir>
+Trivial authentication is provided as a poor man's alternative.  In this scheme, the agent transmits the name of the user running the agent to the shadow.  The shadow accepts this name <i>without question</i> and then uses a reverse DNS lookup to determine the name of the machine running the agent.  These two names are attached together into a subject name that looks something like an email address:
+<p>
+<dir><pre>
+fred@construction.bedrock.gov
+</pre></dir>
+<p>
+Authorization is performed by looking for the subject name in an <i>authorization file</i>.  The <tt>-authfile</tt> option specifies the path to an authorization file you can create.  This file simply lists subject names one to a line.  An asterisk may be used as a a wildcard to match several subjects.  An example authorization file might be:
+<p>
+<dir><pre>
+/C=US/O=Bedrock Township/OU=Construction Services/CN=Fred Flintstone
+/C=US/O=University of Petonkwa/OU=Computer Sciences/*
+fred@construction.bedrock.gov
+*@administration.bedrock.gov
+</pre></dir>
+<p>
+
+<table>
+<tr>
+<td bgcolor=#ff2222 fgcolor=#ffffff>
+Important Security Note:
+<tr>
+<td bgcolor=#aaaaaa>
+If you do not specify an authorization file, it is assumed you are willing to accept any connection.  I do not recommend doing this for a production enviroment.  Use <code>-authfile</code> to control the allowed connections.
+</table>
+
+<table>
+<tr>
+<td bgcolor=#aaaaff>
+Note:
+<tr>
+<td bgcolor=#aaaaaa>
+The Globus option is only available if the Globus libraries can be found.  If you are building the examples in the Bypass package, the <code>configure</code> program will take care of finding and using them.  If you are building your own software, you must compile the agent and shadow with <code>-DUSE_GLOBUS_GSS</code> and direct the compiler and linker to the various and sundry Globus libraries by yourself.
+</table>
+
+<a name=security>
+<h2>Security</h2>
+</a>
+
+<a name=notes_for_wizards>
+<h2> Notes for Wizards </h2>
+</a>
+
+<b>If this is your first trip through the manual, we recommend that you stop here and try your hand at the examples.</b>  Return to this section if you need more details about the esoteric bits of Bypass.
+
+<h3>Preprocessor Commands</h3>
+
+Bypass code is fed through the C preprocessor <i>twice</i>.  Bypass runs the preprocessor before reading your input file, and then it is run again as part of the C++ compiling stage.  Commands for the first pass should begin with <code>#</code>, and commands for the second pass should begin with <code>@</code>.
+<p>
+For example, you may want to use the preprocessor to manage what code is included, but the code itself may also require the preprocessor:
+<pre>
+#ifdef sun
+        int exit( int status )
+                agent_action
+                {{
+                        @define SUCCESS -1
+                        exit(SUCCESS);
+                }};  
+#else
+        int exit( int status )
+                agent_action
+		{{
+                        @define SUCCESS 0
+                        exit(SUCCESS);
+                }};  
+#endif
+</pre>
+
+<h3>Variable Arguments</h3>
+
+In general, Bypass does not support procedures with a variable number of arguments.  However, there are several system calls which declare a variable argument interface, but always use one extra argument with a predictable type.
+<p>
+A trailing argument enclosed in brackets indicates that the declaration is variable, but any call to the procedure should assume a variable with the bracketed name and type.
+<p>
+A replacement for <code>fcntl</code> might be declared like this:
+<dir><pre>
+int fcntl( int fd, int command, [void *arg] );
+</pre></dir>
+
+<h3>Supported Data Types</h3>
+
+Bypass does not go to the trouble to support every last possible combination of C++ type keywords.  The following syntax for types is supported:
+
+<dir><pre>
+type      : [unsigned] [const] [struct] type-name star-list
+star-list : /* nothing */
+          | [const] '*' star-list
+</pre></dir>
+
+<h3>Environment Variables</h3>
+
+Agents created by Bypass consult several environment variables.
+<dir><pre>
+BYPASS_SHADOW_HOST
+</pre></dir>
+In this variable, the user must place the hostname or IP address of the shadow to contact.
+<dir><pre>
+BYPASS_SHADOW_PORT
+</pre></dir>
+In this variable, the user must place the port number of the shadow to contact.
+<dir><pre>
+BYPASS_DEBUG
+</pre></dir>
+If this optional variable is set, a Bypass agent will display some debugging information on the standard error stream.
+<dir><pre>
+BYPASS_FAILURE_PASSTHROUGH
+</pre></dir>
+If this optional variable is set, errors that are normally fatal will be returned as normal error codes from RPC routines.  For example, if the network fails while an agent is executing a <tt>bypass_shadow_open</tt>, the normal result is for Bypass to display an error and kill the process.  However, if this variable is set, the RPC will simply return -1 with an appropriate errno, such as EPIPE.
+<p>
+This default behavior is chosen for two reasons.  First, re-establishing the connection and rebuilding any state that was accumulated at the shadow is beyond the power of the application.  Second, Bypass forces an abnormal termination (killed by signal) so that the scheduling system does not assume the application exited normally.
+<p>
+The modified behavior may be useful to some agents (such as the <a href=http://www.cs.wisc.edu/condor/bypass/examples/grid-console>Grid Console</a>) which may have enough information to trap and retry such errors.
+
+<h3>Built-In Utilities</h3>
+
+For most purposes, code written in agent blocks need not contain any specialized Bypass code.  HOwever, a few procedures are provided that may be useful to the agent programmer.
+
+<dir><pre>
+int bypass_shadow_*( ... );
+</pre></dir>
+If building both a shadow and an agent, Bypass will generate RPC stubs that match the procedure declaration.  These stubs bear the name of the replaced procedure with <code>bypass_shadow</code> prepended.  For example, to invoke a remote <code>open</code> invoke <code>bypass_shadow_open</code> with the same arguments as <code>open</code>.  This may be done inside of any agent action.
+
+<dir><pre>
+void bypass_debug( char *fmt, ... );
+</pre></dir>
+This function accepts printf-style arguments and displays the output on the standard error stream if BYPASS_DEBUG is set.
+
+<dir><pre>
+void bypass_error( char *fmt, ... );
+</pre></dir>
+This function accepts printf-style arguments and always displays the output on the standard error stream.
+
+<dir><pre>
+void bypass_die();
+</pre></dir>
+This function forces the calling process to terminate abnormally.
+
+<dir><pre>
+int bypass_failure_passthrough;
+</pre></dir>
+Setting this integer to true has the same effect as setting BYPASS_FAILURE_PASSTHROUGH.
+
+<h3>The Knowledge File</h3>
+
+<p>
+Bypass generates code for a variety of UNIX-like platforms.  On each platform, there are many tricky details to trapping and invoking each of the system calls.  Bypass collects all these details together in a <i>knowledge file</i>, <code>lib/bypass_knowledge</code>.  When a user requests that a call be trapped, Bypass consults the knowledge file and generates several pieces of code for each of the user's declarations.
+<p>
+The knowledge file has the same syntax as a regular Bypass input file, but it make heavy use of <i>option rules</i>.  An option rule lists the tricky details needed for a particular system call.  An option rule by itself does not generate any code -- it only specifies options in case the user <i>wants</i> to trap the named procedure.
+<p>
+For example, the option statement for <code>read</code> is:
+<pre>
+options "read"
+        entry "_read", "__read"
+        syscall
+        local_name "read"
+        remote_name "read"
+	;
+</pre>
+<code>entry</code> indicates that trapping <code>read</code> also involves catching the related <code>_read</code> and <code>__read</code>.  <code>syscall</code> indicates that <code>read</code> is a true system call (as opposed to a standard library call.)  <code>local_name</code> and <code>remote_name</code> give the names of the procedures to invoke when operating locally or via RPC.  These are almost always the same as the regular procedure.
+<p>
+Option rules tend to be very similar to the example above -- only a few break the pattern.  So, rules may use <i>wildcards</i> which specify the options for a whole class of system calls.  For example, the first entry in the knowledge file looks something like this:
+<pre>
+options "*"
+        entry "_*", "__*"
+        local_name "*"
+        remote_name "*"
+        syscall
+        library "libc"
+        ;
+</pre>
+This statement indicates that any system call will get the rules mentioned, with the call's name substituted for each occurrence of "*".
+<p>
+A call may match several option rules.  For example, <code>fstat</code> would match entries named <code>"*"</code>, <code>"f*"</code>, and <code>"fstat"</code>.  If this happens, the rules are applied in the order they appear in the knowledge file.
+<p>
+The allowed statements in the option rules are:
+<dir>
+<li> <code>syscall</code><br>This procedure may be re-invoked with a real system call.<p>
+<li> <code>libcall</code><br>This procedure must be re-invoked by consulting a library routine.  Whether the library is static or dynamic is determined by the command line.<p>
+<li> <code>library "library-name"</code><br>Use this library when re-invoking this procedure.  This name should <b>not</b> have a trailing <code>.a</code> or <code>.so</code>.<p>
+<li> <code>plain</code><br>There is no system call or library routine matching this procedure, so flag an error if it is attempted in local mode.<p>
+<li> <code>kill</code><br>This procedure has an inline or static definition in the system include files.  Issue some pre-processor magic to kill these definitions before re-defining the procedure.<p>
+<li> <code>entry "name1", "name2", ...</code><br>Provide additional entry points with these names.<p>
+<li> <code>local_name "name" </code><br>Use this name when re-invoking this procedure locally.<p>
+<li> <code>remote_name "name"</code><br>Use this name when invoking the RPC version of this procedure.<p>
+<li> <code>switch_code {{ code-fragment }} </code><br>Do not automatically generate switch code.  Use this code instead.<p>
+<li> <code>indirect "name"</code><br>Generate an indirect system call using this name as the primary name and the procedure name as the secondary name.  This is used to generate the Linux socket calls, where socket() becomes <code>syscall(SYS_socketcall,SYS_socket,...)</code>.<p>
+<li> <code>instead &lt;procedure-decl&gt;</code><br>Do not generate the procedure that the user requested.  Generate this one instead.<p>
+<li> <code>also {{ code-fragment }}</code> In addition to the usual declaration, add on this bit of code.
+</dir>
+<p>
+The knowledge file is heavily commented with the reasons behind each unusual system call.  The adventuresome reader should skip right to the knowledge file to learn all the dirty details.
+<p>
+
+<a name=frequently_asked_questions>
+<h2>Frequently Asked Questions</h2>
+</a>
+
+<ol>
+
+<li> <i>Why do some of my programs, like cp and ls, ignore the interposition agent?</i>
+<p>
+The standard injection method requires that the accepting program be dynamically linked.  This is true of most programs on modern UNIX systems.  On a few systems, critical programs (such as cp and ls) are statically linked so that they may be used without the standard library present.  Statically linked programs will ignore any interposition agents.  On some systems, you can use the <code>ldd</code> program to determine if a program is dynamically linked.
+<p>
+In particular, many of the standard IRIX utilites are statically linked.  However, the GNU utilities, provided in /usr/gnu/bin, are dynamically linked and should give you the behavior you want.
+<p>
+<li> <a name=position_independent_code><i>What is position independent code?  Why do I need it?</i></a>
+<p>
+Most compilers produce <i>relocatable</i> object code by default.  This kind of code is annotated with <i>relocations</i> which tell the linker how to rewrite bits of the code as it is placed in memory.  This method is just fine for static linking.
+<p>
+Some operating systems do not allow relocatable code to be used in a dynamic library, because processing all those relocations would result in a very long startup time for a simple application.  So, any code that gets placed in a dynamic library must be <i>position independent code</i> -- all references in the code use pc- or base-relative addresses that do not require any relocations.  This allows objects to be re-arranged at run-time without a stiff penalty.
+<p>
+The upshot of this is that all code that goes into an interposition agent must be position-independent.  This is easy to get -- you just compile with the <code>-fPIC</code> flag.  Any additional libraries (such as Globus or SRB) linked against the interposition agent must also be compiled as position-independent.
+<p>
+If you have already built these packages and didn't specify the -fPIC flag at compilation time, then I'm afraid you'll have to re-build them from scratch with -fPIC enabled. 
+<p>
+<li> <i>What does this linker error mean?</i>
+<p>
+<dir>
+<pre>
+Text relocation remains                         referenced
+    against symbol                  offset      in file
+ASN1_UTCTIME_set                    0x740       /p/condor/workspaces/ssl/lib/libcrypto.a(x509_vfy.o)
+...
+(followed by about a million similar lines)
+...
+</pre>
+</dir>
+<p>
+This error means you didn't compile all the various libraries and objects in your agent as position independent code.  Please see the preceding question for more information.
+<p>
+<li> <i>What does this IRIX warning mean?</i>
+<p>
+<dir>
+<tt>
+ld32: WARNING 85: definition of __write in info_agent.o preempts that definition in /usr/lib32/mips3/libc.so.1.
+</tt>
+</dir>
+<p>
+This warning says that your interposition agent defined a system call that was already defined in the standard library.  In most programs, this indicates a bug, but for our purposes, this is <i>exactly</i> what you want -- your interposition agent is replacing a standard system call.  You may safely ignore these warnings.
+<p>
+<li> <i>What does this IRIX error message mean?</i>
+<p>
+<dir>
+<tt>
+ 9038:ls: rld: Warning: elfmap: running old 32-bit executable but finding new 32-bit shared objects with matching DSO name in the search path.  You may not have set the environment variables correctly, please set LD_LIBRARY_PATH for old 32-bit objects, LD_LIBRARYN32_PATH for new 32-bit objects and LD_LIBRARY64_PATH for 64-bit objects -- continue searching ...
+</tt>
+</dir>
+<p>
+The situation on IRIX is a little complicated.  IRIX currently has three binary program models -- o32, n32, and n64.  A program built for one model can only be used with libraries of the same model.  This message means that the program you are trying to run did not have the same binary model as that of the interposition agent, so you cannot inject it.  You need to either rebuild the application or the agent so that they have the same model.  Consult the documentation for your compiler to see exactly how to do this.
+<p>
+<li> <i>Using HPUX, how can I inject an agent into a program at run time?</i>
+<p>
+To the best of my knowledge, you can't do so by simply setting an environment variable.  It may be possible to do so by creating a separate program which uses the <code>/proc</code> interface to load a program, suspend it, and inject the interposition agent.  If you come up with a better method, we would be happy to document it here. 
+<p>
+<li> <i>How does Bypass relate to Condor?</i>
+<p>
+Many of the ideas and techniques used in Bypass were inspired by similar features in Condor.  Bypass does not require Condor, nor does Condor use Bypass.  They are separate programs.
+</ol>
+
+</body>
+</html>
+
+

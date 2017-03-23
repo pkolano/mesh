@@ -1,0 +1,97 @@
+/*
+Bypass
+Copyright (C) 1999-2001 Douglas Thain
+http://www.cs.wisc.edu/condor/bypass
+This program is released under a BSD License.
+See the file COPYING for details.
+*/
+
+#ifdef USE_PTHREADS
+	pthread_key_t bypass_rpc_key;
+#else
+	int bypass_rpc_fd=0;
+#endif
+
+char *bypass_rpc_host=0;
+int bypass_rpc_port;
+
+int bypass_rpc_fd_get()
+{
+	#ifdef USE_PTHREADS
+		return (int)pthread_getspecific(bypass_rpc_key);
+	#else
+		return bypass_rpc_fd;
+	#endif
+}
+
+void bypass_rpc_fd_set( int fd )
+{
+	#ifdef USE_PTHREADS
+		pthread_setspecific(bypass_rpc_key,(void*)fd);
+	#else
+		bypass_rpc_fd = fd;
+	#endif
+}
+
+void bypass_rpc_env_init()
+{
+	char *txt;
+
+	if(bypass_rpc_host) return;
+
+	bypass_rpc_host = getenv("BYPASS_SHADOW_HOST");
+	if(!bypass_rpc_host) bypass_fatal("I expected a hostname in BYPASS_SHADOW_HOST!\n");
+
+	txt = getenv("BYPASS_SHADOW_PORT");
+	if(!txt) bypass_fatal("I expected a port number in BYPASS_SHADOW_PORT!\n");
+
+	bypass_rpc_port = atoi(txt);
+
+	#ifdef USE_PTHREADS
+		pthread_key_create(&bypass_rpc_key,0);
+	#endif
+}
+
+int bypass_rpc_init()
+{
+	int fd;
+
+	bypass_rpc_env_init();
+
+	if(bypass_rpc_fd_get()) return 1;
+
+	bypass_debug("connecting to %s port %d\n",bypass_rpc_host,bypass_rpc_port);
+
+	fd = network_connect(bypass_rpc_host,bypass_rpc_port);
+	if(fd<0) return 0;
+
+	/* Attempt to get a high-numbered fd */
+	if(dup2(fd,126)==126) {
+		fd = 126;
+	}
+
+	network_tune( fd, NETWORK_TUNE_INTERACTIVE );
+
+	auth_trivial_register();
+
+	#ifdef USE_GLOBUS_GSS
+		auth_globus_register();
+	#endif
+
+	if(!auth_assert(fd,bypass_debug_mode)) {
+		network_close(fd);
+		return 0;
+	}
+
+	bypass_rpc_fd_set(fd);
+
+	return 1;
+}
+
+void bypass_rpc_close()
+{
+	if(bypass_rpc_fd_get()) {
+		network_close(bypass_rpc_fd_get());
+		bypass_rpc_fd_set(0);
+	}
+}

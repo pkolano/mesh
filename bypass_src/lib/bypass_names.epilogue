@@ -1,0 +1,7 @@
+};
+
+// PZK 11/3/11: changed return to const to avoid warnings
+const char *bypass_call_string( int call_number )
+{
+	return bypass_call_name_table[call_number];
+}

@@ -1,0 +1,51 @@
+Bypass
+Copyright (C) 1999-2001 Douglas Thain
+http://www.cs.wisc.edu/condor/bypass
+This program is released under a BSD license.
+See the file COPYING for details.
+
+Bypass is a tool for rerouting calls to UNIX system calls and
+library procedures.
+
+Please read doc/bypass.html.
+
+If you are in a hurry to try Bypass without reading the
+documentation, then do this:
+
+On Linux or Solaris:
+
+	% ./configure
+	% make
+	% setenv LD_PRELOAD `pwd`/examples/info_agent.so
+
+On OSF/1 or IRIX:
+
+	% ./configure
+	% make
+	% setenv _RLD_LIST `pwd`/examples/info_agent.so:DEFAULT
+
+Now, run any program you like.  Try something simple like "ls -l" for
+starters. The library "info_agent.so" instruments the read() and write()
+system calls to record how much I/O is performed.  When a program performs the
+exit() system call, a message giving the total I/O is displayed.
+
+Here is an example of the output on Solaris:
+
+	% ls -l info.h
+	  -rw-r--r--   1 thain    23330        3404 Apr 11 13:40 info.h
+	  NOTICE: 297267 bytes read, 62 bytes written.
+
+To return to normal operation, unset the environment variable:
+
+	% unsetenv LD_PRELOAD
+
+	or
+
+	% unsetenv _RLD_LIST
+
+Further details are given in doc/bypass.html.
+
+Douglas Thain (thain@cs.wisc.edu)
+Condor Team (condor-admin@cs.wisc.edu)
+Computer Sciences
+University of Wisconsin

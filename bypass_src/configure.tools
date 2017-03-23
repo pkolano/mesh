@@ -1,0 +1,194 @@
+
+save_arguments()
+{
+cat >configure.rerun <<EOF
+#!/bin/sh
+$@
+EOF
+chmod 755 configure.rerun
+}
+
+check_file ()
+{
+	echo -n "checking for $1..."
+	if [ -f $1 ]
+	then
+		echo "yes"
+		return 0
+	else
+		echo "no"
+		return 1
+	fi
+}
+
+check_path ()
+{
+	echo -n "checking for $1..."
+	IFS=":"
+	for dir in $PATH
+	do
+		if [ -x $dir/$1 ]
+		then
+			echo "$dir/$1"
+			IFS=" "
+			return 0
+		fi
+	done
+	echo "not found"
+	IFS=" "
+	return 1
+}
+
+check_library()
+{
+	echo -n "checking for lib${1}..."
+	output=`ld -l$1 -o .tmp 2>&1 > .tmp2`
+	if [ $? -eq 0 ]
+	then
+		echo "yes"
+		return 0
+	else
+		echo "no"
+		return 1
+	fi
+}
+
+check_function()
+{
+	echo -n "checking for $1 in $2..."
+	if grep $1 $2 >.tmp 2>&1
+	then
+		echo "yes"
+		return 0
+	else
+		echo "no"
+		return 1
+	fi
+}
+
+require_file ()
+{
+	if check_file $1
+	then
+		return 0
+	else
+		echo "Sorry, I can't proceed without file $1";
+		exit 1
+	fi
+}
+
+require_path ()
+{
+	if check_path $1
+	then
+		return 0
+	else
+		echo "Sorry, I can't proceed without program $1";
+		exit 1
+	fi
+}
+
+require_library ()
+{
+	if check_library $1
+	then
+		return 0
+	else
+		echo "Sorry, I can't proceed without library $1";
+		exit 1
+	fi
+}
+
+require_function ()
+{
+	if check_function $1 $2
+	then
+		return 0
+	else
+		echo "Sorry, I can't proceed without function $1";
+		exit 1
+	fi
+}
+
+optional_library()
+{
+	if check_library $1
+	then
+		ccflags="${ccflags} -D$2"
+		ldflags="${ldflags} -l$1"
+	fi
+	return 0
+}
+
+optional_function()
+{
+	if check_function $1 $2
+	then
+		ccflags="${ccflags} -D$3"
+	fi
+	return 0
+}
+
+
+require_gnu_make()
+{
+	if check_path "make"
+	then
+		echo -n "checking if make is GNU..."
+		kind=`make -v 2>&1| head -1 | awk '{print $1}'`
+		if [ X$kind = XGNU ]
+		then
+			echo "yes"
+            make="make"
+			return 0
+		else
+			echo "no"
+		fi
+	fi
+
+	# PZK 5/25/06: added check for gmake
+	if check_path "gmake"
+	then
+		echo -n "checking if gmake is GNU..."
+		kind=`gmake -v 2>&1| head -1 | awk '{print $1}'`
+		if [ X$kind = XGNU ]
+		then
+			echo "yes"
+            make="gmake"
+			echo "*** NOTE: use 'gmake' instead of 'make' to build. ***"
+			return 0
+		else
+			echo "no"
+		fi
+	fi
+
+	echo "Sorry, you must have GNU make in your path."
+	exit 1
+}
+
+check_perl_version()
+{
+	if check_path "perl"
+	then
+		echo -n "checking perl version..."
+		cat >.perl-test <<EOF
+print "\$]\n";
+ 
+\$v = \$ARGV[0]+\$ARGV[1]/1000+\$ARGV[2]/1000000;
+ 
+if(\$v>=\$]) {
+        exit 1;
+} else  {
+        exit 0;
+} 
+EOF
+		if perl .perl-test $1 $2 $3
+		then
+			return 0
+		else
+			return 1
+		fi
+	fi
+
+	return 1
+}

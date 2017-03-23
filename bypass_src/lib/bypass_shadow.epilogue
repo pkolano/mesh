@@ -1,0 +1,256 @@
+/*
+Bypass
+Copyright (C) 1999-2001 Douglas Thain
+http://www.cs.wisc.edu/condor/bypass
+This program is released under a BSD License.
+See the file COPYING for details.
+*/
+
+		default:
+			packet_delete(bypass_packet);
+			bypass_packet = 0;
+			goto fail;
+	}
+
+	if(packet_put( bypass_fd, bypass_response )) {
+		packet_delete(bypass_response);
+		bypass_response = 0;
+	}
+
+	fail:
+
+	if(bypass_packet) {
+		packet_delete(bypass_packet);
+		bypass_packet = 0;
+	}
+
+	if(bypass_response) {
+		packet_delete(bypass_response);
+		bypass_response = 0;
+
+		bypass_response = packet_create(0);
+		bypass_errno = EINVAL;
+		if(external_errno_map(bypass_response,EXTERNAL_OUT,&bypass_errno)) {
+			if(!packet_put(bypass_fd,bypass_response)) {
+				packet_delete(bypass_response);
+				bypass_response = 0;
+			}
+		}
+	}
+
+	if(bypass_response) {
+		packet_delete(bypass_response);
+		return -1;
+	} else {
+		return bypass_number;
+	}
+}
+
+static int debug=0;
+static char *authfile=0;
+static int enable_globus_auth=0;
+static int enable_trivial_auth=0;
+
+// PZK 11/3/11: changed return to const to avoid warnings
+const char *bypass_call_string( int call );
+
+static void handle_one_client( int client )
+{
+	char addrstr[256];
+	char *subject;
+	int addr, port;
+	int callnum;
+
+	network_address_remote( client, &addr, &port );
+	network_address_to_string( addr, addrstr );
+	network_tune( client, NETWORK_TUNE_INTERACTIVE );
+
+	if(debug) {
+		fprintf(stderr,"%s connected\n",addrstr);
+	}
+
+	if(!auth_accept(client,&subject,debug)) {
+		fprintf(stderr,"%s couldn't authenticate user\n",addrstr);
+		network_close(client);
+		return;
+	}
+
+	if(authfile) {
+		if(auth_lookup(subject,authfile)) {
+			if(debug) {
+				fprintf(stderr,"%s '%s' is authorized\n",addrstr,subject);
+			}
+		} else {
+			fprintf(stderr,"%s '%s' is *not* authorized\n",addrstr,subject);
+			network_close(client);
+			return;
+		}
+	} else {
+		if(debug) {
+			fprintf(stderr,"%s no authfile, so '%s' is authorized by default\n",addrstr,subject);
+		}
+	}
+
+	while(1) {
+		global_bypass_fd = client;
+		callnum = bypass_receive_call(client);
+		if( callnum==-1 ) {
+			if(debug) {
+				fprintf(stderr,"%s disconnected\n",addrstr);
+			}
+			break;
+		} else {
+			if( debug ) {
+				fprintf(stderr,"%s called %s\n",addrstr,bypass_call_string(callnum));
+			}
+		}
+	}
+
+	network_close( client );
+}
+
+/* We don't really care when or how children exit, but we must wait() to reap the dead process */
+
+static void child_handler( int sig )
+{
+	int result=1;
+	while(result>0) {
+		result = waitpid(-1,0,WNOHANG);
+	}
+	signal(SIGCHLD,child_handler);
+}
+
+int main(int argc, char *argv[])
+{
+	enum { ONESHOT, MULTIPROCESS, MULTITHREAD } mode=MULTIPROCESS;
+	int server, client;
+	char server_str[256];
+	network_address server_address;
+	int server_port=0,i;
+	pid_t child_pid;
+
+	#ifdef USE_PTHREADS
+		pthread_t child_tid;
+	#endif
+
+	#ifdef USE_GLOBUS_GSS
+		enable_globus_auth = 1;
+		enable_trivial_auth = 0;
+	#else
+		enable_globus_auth = 0;
+		enable_trivial_auth = 1;
+	#endif
+
+
+	for( i=1; i<argc; i++ ) {
+		if(!strcmp(argv[i],"-oneshot")) {
+			mode = ONESHOT;
+		} else if(!strcmp(argv[i],"-multiprocess")) {
+			mode = MULTIPROCESS;
+		} else if(!strcmp(argv[i],"-multithread")) {
+			#ifdef USE_PTHREADS
+				mode = MULTITHREAD;
+			#else
+				fprintf(stderr,"%s not supported.  Try re-building with -DUSE_PTHREADS\n",argv[i]);
+			#endif
+		} else if(!strcmp(argv[i],"-port")) {
+			i++;
+			if(i>=argc) {
+				fprintf(stderr,"-port requires an argument.\n");
+				return -1;
+			}
+			server_port = atoi(argv[i]);
+		} else if(!strcmp(argv[i],"-authfile")) {
+			i++;
+			if(i>=argc) {
+				fprintf(stderr,"-authfile requires an argument.\n");
+				return -1;
+			}
+			authfile = argv[i];
+		} else if(!strcmp(argv[i],"-enable-globus-auth")) {
+			#ifdef USE_GLOBUS_GSS
+				enable_globus_auth=1;
+			#else
+				fprintf(stderr,"%s not supported.  Try rebuilding with -DUSE_GLOBUS_GSS.\n",argv[i]);
+			#endif
+		} else if(!strcmp(argv[i],"-disable-globus-auth")) {
+			enable_globus_auth=0;
+		} else if(!strcmp(argv[i],"-enable-trivial-auth")) {
+			enable_trivial_auth=1;
+		} else if(!strcmp(argv[i],"-disable-trivial-auth")) {
+			enable_trivial_auth=0;
+		} else if(!strcmp(argv[i],"-debug")) {
+			debug=1;
+		} else {
+			fprintf(stderr,"Use: %s [options]\n",argv[0]);
+			fprintf(stderr,"Options are:\n");
+			fprintf(stderr,"    -multiprocess            Start a new process for every client\n");
+			fprintf(stderr,"    -multithread             Start a new thread for every client\n");
+			fprintf(stderr,"    -oneshot                 Accept one client and exit when done\n");
+			fprintf(stderr,"    -port <number>           Listen for connections on this port\n");
+			fprintf(stderr,"    -enable-globus-auth      Allow authentication using Globus GSS\n");
+			fprintf(stderr,"    -disable-globus-auth     Do not allow the same\n");
+			fprintf(stderr,"    -enable-trivial-auth     Allow authentication using the 'trivial' scheme\n");
+			fprintf(stderr,"    -disable-trivial-auth     Do not allow the same\n");
+			fprintf(stderr,"    -authfile <file>         File listing authorized users\n");
+			fprintf(stderr,"    -debug                   Show debugging output\n");
+			return -1;
+		}
+	}
+
+	if(enable_trivial_auth) {
+		auth_trivial_register();
+	}
+
+	#ifdef USE_GLOBUS_GSS
+		if(enable_globus_auth) {
+			auth_globus_register();
+		}
+	#endif
+
+	signal(SIGCHLD,child_handler);
+
+	server = network_serve(server_port);
+	if(server==-1) {
+		fprintf(stderr,"Unable to use port %d! (%s)\n",server_port,strerror(errno));
+		return -1;
+	}
+
+	network_address_local( server, &server_address, &server_port );
+	network_address_to_string( server_address, server_str );
+
+	fprintf(stderr,"setenv BYPASS_SHADOW_HOST %s\n",server_str);
+	fprintf(stderr,"setenv BYPASS_SHADOW_PORT %d\n",server_port);
+
+	while(1) {
+		client = network_accept(server);
+		if(client<0) continue;
+
+		switch(mode) {
+			case MULTIPROCESS:
+				child_pid = fork();
+				if( child_pid>0 ) {
+					network_close(client);
+				} else if( child_pid==0 ) {
+					handle_one_client(client);
+					exit(0);
+				} else {
+					fprintf(stderr,"Unable to fork! (%s)\n",strerror(errno));
+				}
+				break;
+
+			#ifdef USE_PTHREADS
+				case MULTITHREAD:
+					pthread_create( &child_tid, 0, (void * (*)(void *)) handle_one_client, (void*)client );
+					pthread_detach( child_tid );
+					break;
+			#endif
+
+			default:
+				handle_one_client(client);
+				exit(0);
+				break;
+
+		}
+	}
+}
