@@ -1,6 +1,6 @@
 #!/usr/bin/perl -T
 #
-# Copyright (C) 2006-2009 United States Government as represented by the
+# Copyright (C) 2006-2017 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration
 # (NASA).  All Rights Reserved.
 #
@@ -42,7 +42,7 @@ use strict;
 use File::Temp;
 use Getopt::Long qw(:config bundling no_ignore_case require_order);
 
-our $VERSION = 0.16;
+our $VERSION = 0.18;
 
 # default configuration
 my %conf = (
@@ -51,6 +51,7 @@ my %conf = (
     map_port => 22,
     prefix_dir => "/usr/local",
     self_host => undef,
+    var_dir => "/var/lib/mesh",
 );
 
 # parse configuration
@@ -77,6 +78,8 @@ foreach my $key (keys %conf) {
 
 # untaint path
 $ENV{PATH} = "/bin:/usr/bin:/usr/local/bin";
+# untaint insecure environment variables
+delete $ENV{$_} foreach (qw(BASH_ENV CDPATH ENV IFS));
 
 # parse arguments
 my %opts = ();
@@ -100,12 +103,12 @@ if ($opts{user}) {
     if ($conf{"keygen_$opts{user}"}) {
         # invoking user must be in authorized list for given user
         if ($conf{"keygen_$opts{user}"} =~ /(?:^|\s)\Q$user\E(?:\s|$)/) {
-            $pubkey = "$conf{prefix_dir}/var/meshkeys/$opts{user}($user)";
+            $pubkey = "$conf{var_dir}/meshkeys/$opts{user}($user)";
         }
     }
     die "Cannot kill keys for user \"$opts{user}\"\n" if (!$pubkey);
 } else {
-    $pubkey = "$conf{prefix_dir}/var/meshkeys/" . (getpwuid($<))[0];
+    $pubkey = "$conf{var_dir}/meshkeys/" . (getpwuid($<))[0];
 }
 
 my $useropt = $opts{user} ? "--user=$opts{user}" : "";
@@ -204,7 +207,7 @@ if (!$found && !$opts{user} && scalar(@ARGV) == 0) {
     # key must reside in multi-user key file for invoking user
     my $user = getpwuid($<);
     if ($conf{"keygen_$user"}) {
-        my $pubkey_kill = "$conf{prefix_dir}/var/meshkeys/$user.kill";
+        my $pubkey_kill = "$conf{var_dir}/meshkeys/$user.kill";
         if (open(KILL, ">>$pubkey_kill")) {
             $found = 1;
             print KILL "$kill_print\n";

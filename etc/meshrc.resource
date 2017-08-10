@@ -1,4 +1,5 @@
-# allow writes in directories used for ttys, logs, and pid files
+# allow writes in directories used for ttys, tmp files, logs, and pid files
 /dev
+/tmp
 /var/log
 /var/run

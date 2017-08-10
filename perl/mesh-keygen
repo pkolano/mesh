@@ -1,6 +1,6 @@
 #!/usr/bin/perl -T
 #
-# Copyright (C) 2006-2009 United States Government as represented by the
+# Copyright (C) 2006-2017 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration
 # (NASA).  All Rights Reserved.
 #
@@ -43,7 +43,7 @@ use strict;
 use File::Temp;
 use Getopt::Long qw(:config bundling no_ignore_case require_order);
 
-our $VERSION = 0.39;
+our $VERSION = 0.41;
 
 # default configuration
 my %conf = (
@@ -52,6 +52,7 @@ my %conf = (
     map_port => 22,
     prefix_dir => "/usr/local",
     self_host => undef,
+    var_dir => "/var/lib/mesh",
 );
 
 # parse configuration
@@ -78,6 +79,8 @@ foreach my $key (keys %conf) {
 
 # untaint path
 $ENV{PATH} = "/bin:/usr/bin:/usr/local/bin";
+# untaint insecure environment variables
+delete $ENV{$_} foreach (qw(BASH_ENV CDPATH ENV IFS));
 
 # parse arguments
 my %opts = ();
@@ -128,13 +131,13 @@ if ($opts{init} || $opts{"init-add"}) {
     if ($conf{"keygen_$opts{user}"}) {
         # invoking user must be in authorized list for given user
         if ($conf{"keygen_$opts{user}"} =~ /(?:^|\s)\Q$user\E(?:\s|$)/) {
-            $pubkey = "$conf{prefix_dir}/var/meshkeys/$opts{user}($user)";
+            $pubkey = "$conf{var_dir}/meshkeys/$opts{user}($user)";
         }
     }
     die "Cannot generate key for user \"$opts{user}\"\n" if (!$pubkey);
 } else {
     # store generated keys in configured key directory
-    $pubkey = "$conf{prefix_dir}/var/meshkeys/" . (getpwuid($<))[0];
+    $pubkey = "$conf{var_dir}/meshkeys/" . (getpwuid($<))[0];
 }
 # make sure temporary public key file does not exist
 unlink "$pubkey.tmp.pub";

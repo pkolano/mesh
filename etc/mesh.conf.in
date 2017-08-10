@@ -60,6 +60,9 @@ self_host mp_or_map.example.com
 #   (example: sync_hook rsync '%f' mp_backup.example.com:'%f')
 #sync_hook nodefault
 
+# directory in which Mesh will store transient data
+#var_dir /var/lib/mesh
+
 
 ##################
 #### MP host  ####

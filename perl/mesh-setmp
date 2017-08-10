@@ -1,6 +1,6 @@
 #!/usr/bin/perl -T
 #
-# Copyright (C) 2006-2009 United States Government as represented by the
+# Copyright (C) 2006-2017 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration
 # (NASA).  All Rights Reserved.
 #
@@ -41,7 +41,7 @@
 use strict;
 use Getopt::Long qw(:config bundling no_ignore_case require_order);
 
-our $VERSION = 0.10;
+our $VERSION = 0.12;
 
 # default configuration
 my %conf = (
@@ -50,6 +50,7 @@ my %conf = (
     map_port => 22,
     prefix_dir => "/usr/local",
     self_host => undef,
+    var_dir => "/var/lib/mesh",
 );
 
 # parse configuration
@@ -76,6 +77,8 @@ foreach my $key (keys %conf) {
 
 # untaint path
 $ENV{PATH} = "/bin:/usr/bin:/usr/local/bin";
+# untaint insecure environment variables
+delete $ENV{$_} foreach (qw(BASH_ENV CDPATH ENV IFS));
 
 # parse arguments
 my %opts = ();
@@ -95,7 +98,7 @@ if (!$rc || scalar(@ARGV) != 0) {
 
 my $user = getpwuid($<);
 if ($opts{local} && $opts{homemap}) {
-    my $uhome = "$conf{prefix_dir}/var/meshmps/$user.home";
+    my $uhome = "$conf{var_dir}/meshmps/$user.home";
     # given home MAP must be in form user@host
     if ($opts{homemap} =~ /^([\w-]+)\@([\w-.]+)$/) {
         # store given MAP specification for use by mesh-getkey and mesh-getmp
@@ -113,7 +116,7 @@ if ($opts{local} && $opts{homemap}) {
         die "Invalid MAP specification \"$opts{homemap}\"\n";
     }
 } elsif ($opts{home}) {
-    my $uhome = "$conf{prefix_dir}/var/meshmps/$user.home";
+    my $uhome = "$conf{var_dir}/meshmps/$user.home";
     # given home MP must be in form user@host
     if ($opts{home} =~ /^([\w-]+)\@([\w-.]+)$/) {
         # store given MP specification for use by mesh-getkey and mesh-getmp
@@ -152,7 +155,7 @@ if ($opts{away}) {
         }
     }
     # store given MP specifications for use by mesh-getmp
-    my $uaway = "$conf{prefix_dir}/var/meshmps/$user.away";
+    my $uaway = "$conf{var_dir}/meshmps/$user.away";
     open(FILE, '>', $uaway) or die "Unable to open $user.away\n";
     print FILE "$_\n" foreach (@away);
     close FILE;

@@ -1,6 +1,6 @@
 #!/usr/bin/perl -T
 #
-# Copyright (C) 2006-2009 United States Government as represented by the
+# Copyright (C) 2006-2017 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration
 # (NASA).  All Rights Reserved.
 #
@@ -42,7 +42,7 @@
 use strict;
 use POSIX qw(setuid);
 
-our $VERSION = 0.15;
+our $VERSION = 0.16;
 
 # default configuration
 my %conf = (
@@ -85,6 +85,8 @@ foreach my $key ("self_type", @{$req{$conf{self_type}}}) {
 
 # untaint path
 $ENV{PATH} = "/bin:/usr/bin:/usr/local/bin";
+# untaint insecure environment variables
+delete $ENV{$_} foreach (qw(BASH_ENV CDPATH ENV IFS));
 
 # untaint user
 my $user;

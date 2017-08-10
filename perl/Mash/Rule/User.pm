@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2006-2009 United States Government as represented by the
+# Copyright (C) 2006-2017 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration
 # (NASA).  All Rights Reserved.
 #
@@ -43,7 +43,7 @@ use strict;
 
 use Mash::Policy;
 
-our $VERSION = 0.11;
+our $VERSION = 0.12;
 
 # return true if given args and opts are authorized according to
 # conditions specified in user definition, false otherwise
@@ -62,7 +62,7 @@ sub allow {
         $denies = [$denies] if (ref $denies ne 'ARRAY');
         foreach my $deny (@{$denies}) {
             return Mash::Policy->error($conf_hash->{error}, 0)
-                if ($deny->{$user} || $deny->{"uid_$<"});
+                if (exists $deny->{$user} || exists $deny->{"uid_$<"});
         }
     }
 
@@ -71,7 +71,7 @@ sub allow {
     if (defined $allows) {
         $allows = [$allows] if (ref $allows ne 'ARRAY');
         foreach my $allow (@{$allows}) {
-            return 1 if ($allow->{$user} || $allow->{"uid_$<"});
+            return 1 if (exists $allow->{$user} || exists $allow->{"uid_$<"});
         }
         return Mash::Policy->error($conf_hash->{error}, 0);
     }

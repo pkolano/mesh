@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2006-2009 United States Government as represented by the
+# Copyright (C) 2006-2017 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration
 # (NASA).  All Rights Reserved.
 #
@@ -43,7 +43,7 @@ use strict;
 
 use Mash::Policy;
 
-our $VERSION = 0.15;
+our $VERSION = 0.16;
 
 # return true if given args and opts are authorized according to
 # conditions specified in group definition, false otherwise
@@ -65,7 +65,7 @@ sub allow {
         foreach my $deny (@{$denies}) {
             # return false if default group matches given group
             return Mash::Policy->error($conf_hash->{error}, 0)
-                if ($deny->{$ugroup} || $deny->{"gid_$ugid"});
+                if (exists $deny->{$ugroup} || exists $deny->{"gid_$ugid"});
             foreach my $group (keys(%{$deny})) {
                 my $members;
                 # get members of given group
@@ -87,7 +87,7 @@ sub allow {
         $allows = [$allows] if (ref $allows ne 'ARRAY');
         foreach my $allow (@{$allows}) {
             # return true if default group matches given group
-            return 1 if ($allow->{$ugroup} || $allow->{"gid_$ugid"});
+            return 1 if (exists $allow->{$ugroup} || exists $allow->{"gid_$ugid"});
             foreach my $group (keys(%{$allow})) {
                 my $members;
                 # get members of given group

@@ -96,8 +96,8 @@ mia_install:
 
 extra_prefix:
 	grep ^$(GROUP): /etc/group
-	install -d -g root -m 0755 -o root $(PREFIX)var
+	install -d -g root -m 0755 -o root $(VARDIR)
 	install -d -g $(GROUP) -m 0750 -o root /etc/mesh/mapkeys
-	install -d -g $(GROUP) -m 1753 -o root $(PREFIX)var/meshkeys
-	install -d -g root -m 1753 -o root $(PREFIX)var/meshmps
+	install -d -g $(GROUP) -m 1753 -o root $(VARDIR)/meshkeys
+	install -d -g root -m 1753 -o root $(VARDIR)/meshmps
 

@@ -126,23 +126,13 @@ See the deployments section for details.
             o Flex     (compilation only)
             o GNU Make (compilation/installation only)
             o OpenSSH
-            o Perl >= 5.6 and non-standard modules:
-                o Date::Parse
-                o Net::Netmask
-                o Text::Table
-                o Tie::IxHash
-                o XML::Simple
+            o Perl >= 5.6
 
         2.1.2. Single sign-on disabled
 
             o GNU Make (installation only)
             o OpenSSH
-            o Perl >= 5.6 and non-standard modules:
-                o Date::Parse
-                o Net::Netmask
-                o Text::Table
-                o Tie::IxHash
-                o XML::Simple
+            o Perl >= 5.6
 
     2.2. MAP prerequisites
 
@@ -151,12 +141,7 @@ See the deployments section for details.
         o Flex     (compilation only)
         o GNU Make (compilation/installation only)
         o OpenSSH
-        o Perl >= 5.6 and non-standard modules:
-            o Date::Parse
-            o Net::Netmask
-            o Text::Table
-            o Tie::IxHash
-            o XML::Simple
+        o Perl >= 5.6
 
     2.2. Resource prerequisites
 
@@ -177,11 +162,12 @@ See the deployments section for details.
     impact installation behavior.  The type of install is specified
     using the "--type" parameter with a value of "mp", "map", or
     "resource".  The installation prefix is specified using the
-    "--prefix" parameter with the base directory path.  Single sign-on
-    is enabled by default, but may be explicitly disabled using the
-    "--disable-sso" option.  MP and MAP installs also may be given a
-    "--group" parameter with the name of the designated Mesh group.
-    Run "configure --help" for all options and defaults.
+    "--prefix" parameter with the base directory path.  The transient
+    data directory is specified using the "--vardir" parameter. 
+    Single sign-on is enabled by default, but may be explicitly disabled
+    using the "--disable-sso" option.  MP and MAP installs also may be
+    given a "--group" parameter with the name of the designated Mesh
+    group.  Run "configure --help" for all options and defaults.
 
     3.1. MP installation
 
@@ -323,9 +309,10 @@ See the deployments section for details.
 
 4. Configuration
 
-    Note in all cases, $PREFIX refers to the prefix directory given to
-    configure in the installation phase (or "/usr/local" if the
-    "--prefix" option was not specified).
+    Note in all cases, $PREFIX and $VARDIR refer to the prefix and var
+    directories, respectively, given to configure in the installation
+    phase (or "/usr/local" and "/var/lib/mesh" if the "--prefix" or
+    "--vardir" options were not specified).
 
     4.1. MP configuration
 
@@ -395,9 +382,11 @@ See the deployments section for details.
             members of the Mesh group.  The login shell of all such
             accounts must be $PREFIX/bin/mash.
 
-        4.1.5. /etc/init.d/sshd (or equivalent)
+        4.1.5. /usr/lib/systemd/system/sshd.service or
+               /etc/init.d/sshd (or equivalent)
 
-            This file contains commands for invoking the SSH daemon.
+            These files contain the systemd template and SysV init
+            commands, respectively, for invoking the SSH daemon.
             For Linux/BSD, the environment in which the SSH daemon
             executes must contain the settings:
 
@@ -408,9 +397,15 @@ See the deployments section for details.
 
                 _RLD_LIST=$PREFIX/lib/mesh_agent.so:DEFAULT:libgen.so:libC.so.2
 
-            These settings can be achieved by adding an appropriate
-            "env" command.  For example, on a Debian system, the
-            following:
+            In a systemd environment, these settings can be achieved
+            by adding an appropriate "Environment" line to the
+            "sshd.service" file:
+
+                Environment=LD_PRELOAD=$PREFIX/lib/mesh_agent.so MESH_LOCK=0
+
+            For a traditional SysV init environment, these settings can
+            be achieved by adding an appropriate "env" command.  For
+            example, on a legacy Debian system, the following:
 
                 start-stop-daemon --start --quiet --pidfile /var/run/sshd.pid \
                     --exec /usr/sbin/sshd --startas /usr/bin/env --           \
@@ -457,7 +452,7 @@ See the deployments section for details.
             0 8 * * * $PREFIX/sbin/mesh-logstats </var/log/syslog.0 \
                 >/dir/mesh.`/bin/date +%m.%d.%y`
 
-        4.1.9. $PREFIX/var/meshkeys/$USER
+        4.1.9. $VARDIR/meshkeys/$USER
 
             Any private keys distributed to foreign MPs for public key
             retrieval must have the corresponding public key stored on
@@ -530,9 +525,11 @@ See the deployments section for details.
             and be members of the Mesh group.  The login shell of all
             such accounts must be $PREFIX/bin/mash.
 
-        4.2.5. /etc/init.d/sshd (or equivalent)
+        4.2.5. /usr/lib/systemd/system/sshd.service or
+               /etc/init.d/sshd (or equivalent)
 
-            This file contains commands for invoking the SSH daemon.
+            These files contain the systemd template and SysV init
+            commands, respectively, for invoking the SSH daemon.
             For Linux/BSD, the environment in which the SSH daemon
             executes must contain the settings:
 
@@ -543,9 +540,15 @@ See the deployments section for details.
 
                 _RLD_LIST=$PREFIX/lib/mesh_agent.so:DEFAULT:libgen.so:libC.so.2
 
-            These settings can be achieved by adding an appropriate
-            "env" command.  For example, on a Debian system, the
-            following:
+            In a systemd environment, these settings can be achieved
+            by adding an appropriate "Environment" line to the
+            "sshd.service" file:
+
+                Environment=LD_PRELOAD=$PREFIX/lib/mesh_agent.so MESH_LOCK=0
+
+            For a traditional SysV init environment, these settings can
+            be achieved by adding an appropriate "env" command.  For
+            example, on a legacy Debian system, the following:
 
                 start-stop-daemon --start --quiet --pidfile /var/run/sshd.pid \
                     --exec /usr/sbin/sshd --startas /usr/bin/env --           \
@@ -640,11 +643,13 @@ See the deployments section for details.
             Note that this file is not required if single sign-on is
             disabled.
 
-        4.3.4. /etc/init.d/sshd (or equivalent)
+        4.3.4. /usr/lib/systemd/system/sshd.service or
+               /etc/init.d/sshd (or equivalent)
 
-            This file contains commands for invoking the SSH daemon.
+            These files contain the systemd template and SysV init
+            commands, respectively, for invoking the SSH daemon.
             For Linux/BSD, the environment in which the SSH daemon
-            executes must contain the setting:
+            executes must contain the settings:
 
                 LD_PRELOAD=$PREFIX/lib/mesh_agent.so
 
@@ -682,9 +687,16 @@ See the deployments section for details.
                 MESH_MP_IPS=""
             
             disables both single sign-on and host-level authorizations.
-            These settings can be achieved by adding an appropriate
-            "env" command.  For example, on a Debian system, the
-            following:
+            In a systemd environment, these settings can be achieved
+            by adding an appropriate "Environment" line to the
+            "sshd.service" file:
+
+                Environment=LD_PRELOAD=$PREFIX/lib/mesh_agent.so \
+                    MESH_MP_IPS="192.168.1.1 192.168.1.2"
+
+            For a traditional SysV init environment, these settings
+            can can be achieved by adding an appropriate "env" command.
+            For example, on a legacy Debian system, the following:
 
                 start-stop-daemon --start --quiet --pidfile /var/run/sshd.pid \
                     --exec /usr/sbin/sshd --startas /usr/bin/env --           \
@@ -724,8 +736,13 @@ See the deployments section for details.
 5. Activation
 
     Once Mesh has been configured, the appropriate SSH daemons on the
-    MP, MAP, and/or resources must be restarted.  This is typically
-    achieved through the corresponding "/etc/init.d" script:
+    MP, MAP, and/or resources must be restarted.  In a systemd
+    environment, this is achieved using "systemctl":
+
+        systemctl restart sshd
+    
+    In a SysV init environment, this is typically achieved through the
+    corresponding "/etc/init.d" script:
 
         /etc/init.d/sshd restart
 

@@ -1,6 +1,6 @@
 #!/usr/bin/perl -T
 #
-# Copyright (C) 2006-2009 United States Government as represented by the
+# Copyright (C) 2006-2017 United States Government as represented by the
 # Administrator of the National Aeronautics and Space Administration
 # (NASA).  All Rights Reserved.
 #
@@ -41,17 +41,18 @@
 # logging is enabled.
 
 use strict;
-use Date::Parse;
-use Getopt::Long qw(:config bundling no_ignore_case require_order);
+require Date::Parse;
 use Socket;
-use Text::Table;
+require Text::FormatTable;
 
-our $VERSION = 0.17;
+our $VERSION = 0.19;
 
 # default configuration
 my %conf = (
     conf_file => "/etc/mesh/mesh.conf",
+    key_days => 7,
     prefix_dir => "/usr/local",
+    var_dir => "/var/lib/mesh",
 );
 
 # parse configuration
@@ -75,12 +76,6 @@ foreach my $key (keys %conf) {
     die "Config parameter \"$key\" is not defined\n"
         if (!$conf{$key});
 }
-
-# parse arguments
-my %opts = ();
-my $rc = GetOptions(\%opts, "days=i");
-$opts{days} = 7 if (!$opts{days});
-$opts{days}--;
 
 my @lines = ();
 my %days = ();
@@ -118,7 +113,7 @@ while (<>) {
         $tmp = gethostbyaddr(inet_aton($src), AF_INET);
         $src = $tmp if ($tmp);
         # convert date string to mm/dd/yy format
-        my @date = localtime(str2time($time));
+        my @date = localtime(Date::Parse::str2time($time));
         my $day = sprintf("%02d", $date[4] + 1) . "/" .
             sprintf("%02d", $date[3]) . "/" .
             sprintf("%02d", $date[5] % 100);
@@ -133,24 +128,22 @@ while (<>) {
 }
 
 # create keys per user table
-my @row = ({title => "user\n" . "-" x 4, align_title => 'center'});
-push(@row, \' | ');
-push(@row, {title => "expired\n" . "-" x 7, align_title => 'center'});
+my $align = "l | r | r";
+my @row = qw(user expired);
 my %keys = (expired => 0, total => 0);
-for (0..$opts{days}) {
+for (0..$conf{key_days} - 1) {
     $keys{$_} = 0;
-    push(@row, \' | ');
-    my $title = $_ . "-" . ($_ + 1) . " days";
-    push(@row, {title => "$title\n" . "-" x length($title),
-        align_title => 'center'});
+    push(@row, $_ . "-" . ($_ + 1) . " days");
+    $align .= " | r";
 }
-push(@row, \' | ');
-push(@row, {title => "all\n" . "-" x 3, align_title => 'center'});
-my $t = Text::Table->new(@row);
+push(@row, "all");
+my $t = Text::FormatTable->new($align);
+$t->head(@row);
 
 # add row for each user
+$t->rule;
 my $time0 = time;
-foreach my $key (glob "$conf{prefix_dir}/var/meshkeys/*") {
+foreach my $key (glob "$conf{var_dir}/meshkeys/*") {
     # ignore temporary keys that were never finalized
     next if ($key =~ /\.tmp/);
     my %count;
@@ -175,7 +168,7 @@ foreach my $key (glob "$conf{prefix_dir}/var/meshkeys/*") {
 
     # fill out row for each user with expiration counts
     @row = ($key, $count{expired});
-    for (0..$opts{days}) {
+    for (0..$conf{key_days} - 1) {
         $count{$_} = '' if (!$count{$_});
         push(@row, $count{$_});
         $keys{$_} += $count{$_};
@@ -183,88 +176,293 @@ foreach my $key (glob "$conf{prefix_dir}/var/meshkeys/*") {
     push(@row, $count);
     $keys{total} += $count;
     $keys{expired} += $count{expired};
-    $t->add(@row);
+    $t->row(@row);
 }
+
 # add totals of all columns
-@row = ("\nall");
-push(@row, "\n" . $keys{expired});
-for (0..$opts{days}) {
-    push(@row, "\n" . $keys{$_});
+$t->rule;
+@row = ("all");
+push(@row, $keys{expired});
+for (0..$conf{key_days} - 1) {
+    push(@row, $keys{$_});
 }
-push(@row, "\n" . $keys{total});
-$t->add(@row);
-print "Keys per user\n\n$t\n\n";
+push(@row, $keys{total});
+$t->row(@row);
+print "Keys per user\n\n", $t->render, "\n\n";
 
 # create commands per day, user, source, and target tables
-my @types = ("day", "user", "source", "target");
-my @tdata = (\%days, \%users, \%srcs, \%dsts);
-@row = ();
-for (my $i = 0; $i < scalar(@types); $i++) {
-    my $title = $types[$i];
-    @row = ({title => "$title\n" . "-" x length($title),
-        align_title => 'center'});
+my @types = (["day", \%days], ["user", \%users], ["source", \%srcs],
+    ["target", \%dsts]);
+foreach my $type (@types) {
+    $align = "l | r";
+    @row = ($type->[0]);
     foreach my $cmd (sort(keys(%cmds))) {
-        push(@row, \' | ');
-        push(@row, {title => "$cmd\n" . "-" x length($cmd),
-            align_title => 'center'});
+        push(@row, $cmd);
+        $align .= " | r";
     }
-    push(@row, \' | ');
-    push(@row, {title => "all\n" . "-" x 3, align_title => 'center'});
-    $t = Text::Table->new(@row);
-    foreach my $user (sort(keys(%{$tdata[$i]}))) {
+    push(@row, "all");
+    $t = Text::FormatTable->new($align);
+    $t->head(@row);
+
+    $t->rule;
+    foreach my $user (sort(keys(%{$type->[1]}))) {
         @row = ($user);
         my $total = 0;
         foreach my $cmd (sort(keys(%cmds))) {
             # search for lines with given type value, user, and command
-            my $count = grep(/\Q$title\E:\Q$user\E .*cmd:\Q$cmd\E /, @lines);
+            my $count = grep(/\Q$type->[0]\E:\Q$user\E .*cmd:\Q$cmd\E /, @lines);
             $total += $count;
             $count = '' if (!$count);
             push(@row, $count);
         }
         # add total invocations per table type
         push(@row, $total);
-        $t->add(@row);
+        $t->row(@row);
     }
-    print "Commands per $title\n\n$t\n\n";
+    print "Commands per $type->[0]\n\n", $t->render, "\n\n";
 }
 
 # create totals per command table
-@row = ();
-push(@row, {title => "command\n" . "-" x 7, align_title => 'center'});
+$align = "l | r";
+@row = ("command");
 foreach my $type (@types) {
-    push(@row, \' | ');
-    push(@row, {title => $type . "s\n-" . "-" x length($type),
-        align_title => 'center'});
+    push(@row, $type->[0] . "s");
+    $align .= " | r";
 }
-push(@row, \' | ');
-push(@row, {title => "calls\n" . "-" x 5, align_title => 'center'});
-$t = Text::Table->new(@row);
+push(@row, "calls");
+$t = Text::FormatTable->new($align);
+$t->head(@row);
 
 # count unique days, users, sources, targets, and total calls
+$t->rule;
 foreach my $cmd (sort(keys(%cmds))) {
     @row = ($cmd);
     foreach my $type (@types) {
         my %uniq = ();
         # find unique instances of each command
         foreach my $line (grep(/cmd:\Q$cmd\E /, @lines)) {
-            if ($line =~ /\Q$type\E:(\S+)/) {
-                $uniq{$1} = 1;
-            }
+            $uniq{$1} = 1 if ($line =~ /\Q$type->[0]\E:(\S+)/);
         }
         push(@row, scalar(keys(%uniq)));
     }
     # add total invocations of each command
     push(@row, scalar(grep(/cmd:\Q$cmd\E /, @lines)));
-    $t->add(@row);
+    $t->row(@row);
 }
 
 # add totals of all days, users, sources, and targets
-@row = ("\nall");
-for (my $i = 0; $i < scalar(@types); $i++) {
-    push(@row, "\n" . scalar(keys(%{$tdata[$i]})));
-}
+$t->rule;
+@row = ("all");
+push(@row, scalar(keys(%{$_->[1]}))) foreach (@types);
 # add total calls across all commands
-push(@row, "\n" . scalar(@lines));
-$t->add(@row);
-print "Totals per command\n\n$t\n\n";
+push(@row, scalar(@lines));
+$t->row(@row);
+print "Totals per command\n\n", $t->render, "\n\n";
+
+# This chunk of stuff was generated by App::FatPacker. To find the original
+# file's code, look for the end of this BEGIN block or the string 'FATPACK'
+BEGIN {
+my %fatpacked;
+
+$fatpacked{"Date/Parse.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'DATE_PARSE';
+  package Date::Parse;require 5.000;use strict;use vars qw($VERSION @ISA @EXPORT);use Time::Local;use Carp;use Time::Zone;use Exporter;@ISA=qw(Exporter);@EXPORT=qw(&strtotime &str2time &strptime);$VERSION="2.30";my%month=(january=>0,february=>1,march=>2,april=>3,may=>4,june=>5,july=>6,august=>7,september=>8,sept=>8,october=>9,november=>10,december=>11,);my%day=(sunday=>0,monday=>1,tuesday=>2,tues=>2,wednesday=>3,wednes=>3,thursday=>4,thur=>4,thurs=>4,friday=>5,saturday=>6,);my@suf=(qw(th st nd rd th th th th th th))x 3;@suf[11,12,13]=qw(th th th);map {$month{substr($_,0,3)}=$month{$_}}keys%month;map {$day{substr($_,0,3)}=$day{$_}}keys%day;my$strptime=<<'ESQ';use vars qw($day_ref $mon_ref $suf_ref $obj);sub gen_parser {local($day_ref,$mon_ref,$suf_ref,$obj)=@_;if($obj){my$obj_strptime=$strptime;substr($obj_strptime,index($strptime,"sub")+6,0)=<<'ESQ';my$sub=eval "$obj_strptime" or die $@;return$sub}eval "$strptime" or die $@}*strptime=gen_parser(\%day,\%month,\@suf);sub str2time {my@t=strptime(@_);return undef unless@t;my($ss,$mm,$hh,$day,$month,$year,$zone)=@t;my@lt=localtime(time);$hh ||=0;$mm ||=0;$ss ||=0;my$frac=$ss - int($ss);$ss=int$ss;$month=$lt[4]unless(defined$month);$day=$lt[3]unless(defined$day);$year=($month > $lt[4])? ($lt[5]- 1): $lt[5]unless(defined$year);return undef unless($month <= 11 && $day >= 1 && $day <= 31 && $hh <= 23 && $mm <= 59 && $ss <= 59);my$result;if (defined$zone){$result=eval {local$SIG{__DIE__}=sub {};timegm($ss,$mm,$hh,$day,$month,$year)};return undef if!defined$result or $result==-1 && join("",$ss,$mm,$hh,$day,$month,$year)ne "595923311169";$result -= $zone}else {$result=eval {local$SIG{__DIE__}=sub {};timelocal($ss,$mm,$hh,$day,$month,$year)};return undef if!defined$result or $result==-1 && join("",$ss,$mm,$hh,$day,$month,$year)ne join("",(localtime(-1))[0..5])}return$result + $frac}1;
+   my %month = map { lc $_ } %$mon_ref;
+   my $daypat = join("|", map { lc $_ } reverse sort keys %$day_ref);
+   my $monpat = join("|", reverse sort keys %month);
+   my $sufpat = join("|", reverse sort map { lc $_ } @$suf_ref);
+  
+   my %ampm = (
+  	'a' => 0,  # AM
+  	'p' => 12, # PM
+  	);
+  
+   my($AM, $PM) = (0,12);
+  
+  sub {
+  
+    my $dtstr = lc shift;
+    my $merid = 24;
+  
+    my($year,$month,$day,$hh,$mm,$ss,$zone,$dst,$frac);
+  
+    $zone = tz_offset(shift) if @_;
+  
+    1 while $dtstr =~ s#\([^\(\)]*\)# #o;
+  
+    $dtstr =~ s#(\A|\n|\Z)# #sog;
+  
+    # ignore day names
+    $dtstr =~ s#([\d\w\s])[\.\,]\s#$1 #sog;
+    $dtstr =~ s/,/ /g;
+    $dtstr =~ s#($daypat)\s*(den\s)?\b# #o;
+    # Time: 12:00 or 12:00:00 with optional am/pm
+  
+    return unless $dtstr =~ /\S/;
+    
+    if ($dtstr =~ s/\s(\d{4})([-:]?)(\d\d?)\2(\d\d?)(?:[-Tt ](\d\d?)(?:([-:]?)(\d\d?)(?:\6(\d\d?)(?:[.,](\d+))?)?)?)?(?=\D)/ /) {
+      ($year,$month,$day,$hh,$mm,$ss,$frac) = ($1,$3-1,$4,$5,$7,$8,$9);
+    }
+  
+    unless (defined $hh) {
+      if ($dtstr =~ s#[:\s](\d\d?):(\d\d?)(:(\d\d?)(?:\.\d+)?)?(z)?\s*(?:([ap])\.?m?\.?)?\s# #o) {
+        ($hh,$mm,$ss) = ($1,$2,$4);
+        $zone = 0 if $5;
+        $merid = $ampm{$6} if $6;
+      }
+  
+      # Time: 12 am
+      
+      elsif ($dtstr =~ s#\s(\d\d?)\s*([ap])\.?m?\.?\s# #o) {
+        ($hh,$mm,$ss) = ($1,0,0);
+        $merid = $ampm{$2};
+      }
+    }
+      
+    if (defined $hh and $hh <= 12 and $dtstr =~ s# ([ap])\.?m?\.?\s# #o) {
+      $merid = $ampm{$1};
+    }
+  
+  
+    unless (defined $year) {
+      # Date: 12-June-96 (using - . or /)
+      
+      if ($dtstr =~ s#\s(\d\d?)([\-\./])($monpat)(\2(\d\d+))?\s# #o) {
+        ($month,$day) = ($month{$3},$1);
+        $year = $5 if $5;
+      }
+      
+      # Date: 12-12-96 (using '-', '.' or '/' )
+      
+      elsif ($dtstr =~ s#\s(\d+)([\-\./])(\d\d?)(\2(\d+))?\s# #o) {
+        ($month,$day) = ($1 - 1,$3);
+  
+        if ($5) {
+  	$year = $5;
+  	# Possible match for 1995-01-24 (short mainframe date format);
+  	($year,$month,$day) = ($1, $3 - 1, $5) if $month > 12;
+  	return if length($year) > 2 and $year < 1901;
+        }
+      }
+      elsif ($dtstr =~ s#\s(\d+)\s*($sufpat)?\s*($monpat)# #o) {
+        ($month,$day) = ($month{$3},$1);
+      }
+      elsif ($dtstr =~ s#($monpat)\s*(\d+)\s*($sufpat)?\s# #o) {
+        ($month,$day) = ($month{$1},$2);
+      }
+      elsif ($dtstr =~ s#($monpat)([\/-])(\d+)[\/-]# #o) {
+        ($month,$day) = ($month{$1},$3);
+      }
+  
+      # Date: 961212
+  
+      elsif ($dtstr =~ s#\s(\d\d)(\d\d)(\d\d)\s# #o) {
+        ($year,$month,$day) = ($1,$2-1,$3);
+      }
+  
+      $year = $1 if !defined($year) and $dtstr =~ s#\s(\d{2}(\d{2})?)[\s\.,]# #o;
+  
+    }
+  
+    # Zone
+  
+    $dst = 1 if $dtstr =~ s#\bdst\b##o;
+  
+    if ($dtstr =~ s#\s"?([a-z]{3,4})(dst|\d+[a-z]*|_[a-z]+)?"?\s# #o) {
+      $dst = 1 if $2 and $2 eq 'dst';
+      $zone = tz_offset($1);
+      return unless defined $zone;
+    }
+    elsif ($dtstr =~ s#\s([a-z]{3,4})?([\-\+]?)-?(\d\d?):?(\d\d)?(00)?\s# #o) {
+      my $m = defined($4) ? "$2$4" : 0;
+      my $h = "$2$3";
+      $zone = defined($1) ? tz_offset($1) : 0;
+      return unless defined $zone;
+      $zone += 60 * ($m + (60 * $h));
+    }
+  
+    if ($dtstr =~ /\S/) {
+      # now for some dumb dates
+      if ($dtstr =~ s/^\s*(ut?|z)\s*$//) {
+        $zone = 0;
+      }
+      elsif ($dtstr =~ s#\s([a-z]{3,4})?([\-\+]?)-?(\d\d?)(\d\d)?(00)?\s# #o) {
+        my $m = defined($4) ? "$2$4" : 0;
+        my $h = "$2$3";
+        $zone = defined($1) ? tz_offset($1) : 0;
+        return unless defined $zone;
+        $zone += 60 * ($m + (60 * $h));
+      }
+  
+      return if $dtstr =~ /\S/o;
+    }
+  
+    if (defined $hh) {
+      if ($hh == 12) {
+        $hh = 0 if $merid == $AM;
+      }
+      elsif ($merid == $PM) {
+        $hh += 12;
+      }
+    }
+  
+    $year -= 1900 if defined $year && $year > 1900;
+  
+    $zone += 3600 if defined $zone && $dst;
+    $ss += "0.$frac" if $frac;
+  
+    return ($ss,$mm,$hh,$day,$month,$year,$zone);
+  }
+  ESQ
+   shift; # package
+  ESQ
+DATE_PARSE
+
+$fatpacked{"Text/FormatTable.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TEXT_FORMATTABLE';
+  package Text::FormatTable;use Carp;use strict;use warnings;use vars qw($VERSION);$VERSION='1.03';sub _uncolorized_length($) {my$str=shift;$str =~ s/\e \[ [^m]* m//xmsg;return length$str}sub _min_width($) {my$str=shift;my$min;for my$s (split(/\s+/,$str)){my$l=_uncolorized_length$s;$min=$l if not defined$min or $l > $min}return$min ? $min : 1}sub _max_width($) {my$str=shift;my$len=_uncolorized_length$str;return$len ? $len : 1}sub _max($$) {my ($a,$b)=@_;return$a if defined$a and (not defined$b or $a >= $b);return$b}sub _wrap($$) {my ($width,$text)=@_;my@lines=split(/\n/,$text);my@w=();for my$l (@lines){push@w,@{_wrap_line($width,$l)}}return \@w}sub _wrap_line($$) {my ($width,$text)=@_;my$width_m1=$width-1;my@t=($text);while(1){my$t=pop@t;my$l=_uncolorized_length$t;if($l <= $width){push@t,$t;return \@t}elsif($t =~ /^(.{0,$width_m1}\S)\s+(\S.*?)$/){push@t,$1;push@t,$2}elsif($t =~ /(.{$width,}?\S)\s+(\S.*?)$/){if (_uncolorized_length $1 > $width_m1){my$left=substr($1,0,$width);my$right=substr($1,$width);push@t,$left;push@t,$right;push@t,$2}else {push@t,$1;push@t,$2}}else {my$left=substr($t,0,$width);my$right=substr($t,$width);push@t,$left;push@t,$right;return \@t}}return \@t}sub _l_box($$) {my ($width,$text)=@_;my$lines=_wrap($width,$text);map {$_ .= ' 'x($width-_uncolorized_length($_))}@$lines;return$lines}sub _r_box($$) {my ($width,$text)=@_;my$lines=_wrap($width,$text);map {$_=(' 'x($width-_uncolorized_length($_)).$_)}@$lines;return$lines}sub _distribution_f($) {my$max_width=shift;return log($max_width)}sub _calculate_widths($$) {my ($self,$width)=@_;my@widths=();for my$r (@{$self->{data}}){$r->[0]eq 'data' or $r->[0]eq 'head' or next;my$cn=0;my ($max,$min)=(0,0);for my$c (@{$r->[1]}){if ($self->{fixed_widths}[$cn]){$widths[$cn][0]=$self->{fixed_widths}[$cn];$widths[$cn][1]=$self->{fixed_widths}[$cn]}else {$widths[$cn][0]=_max($widths[$cn][0],_min_width$c);$widths[$cn][1]=_max($widths[$cn][1],_max_width$c)}$cn++}}my ($total_min,$total_max)=(0,0);for my$c (@widths){$total_min += $c->[0];$total_max += $c->[1]}my$extra_width += scalar grep {$_->[0]eq '|' or $_->[0]eq ' '}(@{$self->{format}});$total_min += $extra_width;$total_max += $extra_width;if($total_max <= $width){my$cn=0;for my$c (@widths){$self->{widths}[$cn]=$c->[1];$cn++}$self->{total_width}=$total_max}else {my@dist_width;ITERATION: while(1){my$total_f=0.0;my$fixed_width=0;my$remaining=0;for my$c (@widths){if(defined$c->[2]){$fixed_width += $c->[2]}else {$total_f += _distribution_f($c->[1]);$remaining++}}my$available_width=$width-$extra_width-$fixed_width;if($available_width < $remaining*5){$available_width=$remaining*5;$width=$extra_width+$fixed_width+$available_width}my$cn=-1;COLUMN: for my$c (@widths){$cn++;next COLUMN if defined$c->[2];my$w=_distribution_f($c->[1])* $available_width / $total_f;if($c->[0]> $w){$c->[2]=$c->[0];next ITERATION}if($c->[1]< $w){$c->[2]=$c->[1];next ITERATION}$dist_width[$cn]=int($w)}last}my$cn=0;for my$c (@widths){$self->{widths}[$cn]=defined$c->[2]? $c->[2]: $dist_width[$cn];$cn++}}}sub _render_rule($$) {my ($self,$char)=@_;my$out='';my ($col,$data_col)=(0,0);for my$c (@{$self->{format}}){if($c->[0]eq '|'){if ($char eq '-'){$out .= '+'}elsif($char eq ' '){$out .= '|'}else {$out .= $char}}elsif($c->[0]eq ' '){$out .= $char}elsif($c->[0]eq 'l' or $c->[0]eq 'L' or $c->[0]eq 'r' or $c->[0]eq 'R'){$out .= ($char)x($self->{widths}[$data_col]);$data_col++}$col++}return$out."\n"}sub _render_data($$) {my ($self,$data)=@_;my@rdata;my ($col,$data_col)=(0,0);my$lines=0;my@rows_in_column;for my$c (@{$self->{format}}){if(($c->[0]eq 'l')or ($c->[0]eq 'L')){my$lb=_l_box($self->{widths}[$data_col],$data->[$data_col]);$rdata[$data_col]=$lb;my$l=scalar @$lb ;$lines=$l if$lines < $l;$rows_in_column[$data_col]=$l;$data_col++}elsif(($c->[0]eq 'r')or ($c->[0]eq 'R')){my$rb=_r_box($self->{widths}[$data_col],$data->[$data_col]);$rdata[$data_col]=$rb;my$l=scalar @$rb ;$lines=$l if$lines < $l;$rows_in_column[$data_col]=$l ;$data_col++}$col++}my$out='';for my$l (0..($lines-1)){my ($col,$data_col)=(0,0);for my$c (@{$self->{format}}){if($c->[0]eq '|'){$out .= '|'}elsif($c->[0]eq ' '){$out .= ' '}elsif($c->[0]eq 'L' or $c->[0]eq 'R'){my$start_print=$lines - $rows_in_column[$data_col];if (defined$rdata[$data_col][$l-$start_print]and $l >= $start_print){$out .= $rdata[$data_col][$l-$start_print]}else {$out .= ' 'x($self->{widths}[$data_col])}$data_col++}elsif($c->[0]eq 'l' or $c->[0]eq 'r'){if(defined$rdata[$data_col][$l]){$out .= $rdata[$data_col][$l]}else {$out .= ' 'x($self->{widths}[$data_col])}$data_col++}$col++}$out .= "\n"}return$out}sub _parse_format($$) {my ($self,$format)=@_;my@f=split(//,$format);my@format=();my@width=();my ($col,$data_col)=(0,0);my$wid;for my$f (@f){if ($f =~ /(\d+)/){$wid .= $f;next}if($f eq 'l' or $f eq 'L' or $f eq 'r' or $f eq 'R'){$format[$col]=[$f,$data_col];$width[$data_col]=$wid;$wid=undef;$data_col++}elsif($f eq '|' or $f eq ' '){$format[$col]=[$f]}else {croak "unknown column format: $f"}$col++}$self->{format}=\@format;$self->{fixed_widths}=\@width;$self->{col}=$col;$self->{data_col}=$data_col}sub new($$) {my ($class,$format)=@_;croak "new() requires one argument: format" unless defined$format;my$self={col=>'0',row=>'0',data=>[]};bless$self,$class;$self->_parse_format($format);return$self}sub _preprocess_row_data($$) {my ($self,$data)=@_;my$cn=0;for my$c (0..($#$data)){$data->[$c]=~ s/^\s+//m;$data->[$c]=~ s/\s+$//m}}sub head($@) {my ($self,@data)=@_;scalar@data==$self->{data_col}or croak "number of columns must be $self->{data_col}";$self->_preprocess_row_data(\@data);$self->{data}[$self->{row}++]=['head',\@data]}sub row($@) {my ($self,@data)=@_;scalar@data==$self->{data_col}or croak "number of columns must be $self->{data_col}";@data=map {defined $_ ? $_ : ""}@data;$self->_preprocess_row_data(\@data);$self->{data}[$self->{row}++]=['data',\@data]}sub rule($$) {my ($self,$char)=@_;$char='-' unless defined$char;$self->{data}[$self->{row}++]=['rule',$char]}sub render($$) {my ($self,$width)=@_;$width=79 unless defined$width;$self->_calculate_widths($width);my$out='';for my$r (@{$self->{data}}){if($r->[0]eq 'rule'){$out .= $self->_render_rule($r->[1])}elsif($r->[0]eq 'head'){$out .= $self->_render_data($r->[1])}elsif($r->[0]eq 'data'){$out .= $self->_render_data($r->[1])}}return$out}1;
+TEXT_FORMATTABLE
+
+$fatpacked{"Time/Zone.pm"} = '#line '.(1+__LINE__).' "'.__FILE__."\"\n".<<'TIME_ZONE';
+  package Time::Zone;require 5.002;require Exporter;use Carp;use strict;use vars qw(@ISA @EXPORT $VERSION @tz_local);@ISA=qw(Exporter);@EXPORT=qw(tz2zone tz_local_offset tz_offset tz_name);$VERSION="2.24";sub tz2zone (;$$$) {my($TZ,$time,$isdst)=@_;use vars qw(%tzn_cache);$TZ=defined($ENV{'TZ'})? ($ENV{'TZ'}? $ENV{'TZ'}: 'GMT'): '' unless$TZ;if (!defined$isdst){my$j;$time=time()unless$time;($j,$j,$j,$j,$j,$j,$j,$j,$isdst)=localtime($time)}if (defined$tzn_cache{$TZ}->[$isdst]){return$tzn_cache{$TZ}->[$isdst]}if ($TZ =~ /^
+  		    ( [^:\d+\-,] {3,} )
+  		    ( [+-] ?
+  		      \d {1,2}
+  		      ( : \d {1,2} ) {0,2} 
+  		    )
+  		    ( [^\d+\-,] {3,} )?
+  		    /x){my$dsttz=defined($4)? $4 : $1;$TZ=$isdst ? $dsttz : $1;$tzn_cache{$TZ}=[$1,$dsttz ]}else {$tzn_cache{$TZ}=[$TZ,$TZ ]}return$TZ}sub tz_local_offset (;$) {my ($time)=@_;$time=time()unless$time;my (@l)=localtime($time);my$isdst=$l[8];if (defined($tz_local[$isdst])){return$tz_local[$isdst]}$tz_local[$isdst]=&calc_off($time);return$tz_local[$isdst]}sub calc_off {my ($time)=@_;my (@l)=localtime($time);my (@g)=gmtime($time);my$off;$off=$l[0]- $g[0]+ ($l[1]- $g[1])* 60 + ($l[2]- $g[2])* 3600;if ($l[7]==$g[7]){}elsif ($l[7]==$g[7]+ 1){$off += 86400}elsif ($l[7]==$g[7]- 1){$off -= 86400}elsif ($l[7]< $g[7]){$off += 86400}else {$off -= 86400}return$off}CONFIG: {use vars qw(%dstZone %zoneOff %dstZoneOff %Zone);my@dstZone=("brst"=>-2*3600,"adt"=>-3*3600,"edt"=>-4*3600,"cdt"=>-5*3600,"mdt"=>-6*3600,"pdt"=>-7*3600,"akdt"=>-8*3600,"ydt"=>-8*3600,"hdt"=>-9*3600,"bst"=>+1*3600,"mest"=>+2*3600,"metdst"=>+2*3600,"sst"=>+2*3600,"fst"=>+2*3600,"cest"=>+2*3600,"eest"=>+3*3600,"msd"=>+4*3600,"wadt"=>+8*3600,"kdt"=>+10*3600,"aedt"=>+11*3600,"eadt"=>+11*3600,"nzd"=>+13*3600,"nzdt"=>+13*3600,);my@Zone=("gmt"=>0,"ut"=>0,"utc"=>0,"wet"=>0,"wat"=>-1*3600,"at"=>-2*3600,"fnt"=>-2*3600,"brt"=>-3*3600,"mnt"=>-4*3600,"ewt"=>-4*3600,"ast"=>-4*3600,"est"=>-5*3600,"act"=>-5*3600,"cst"=>-6*3600,"mst"=>-7*3600,"pst"=>-8*3600,"akst"=>-9*3600,"yst"=>-9*3600,"hst"=>-10*3600,"cat"=>-10*3600,"ahst"=>-10*3600,"nt"=>-11*3600,"idlw"=>-12*3600,"cet"=>+1*3600,"mez"=>+1*3600,"ect"=>+1*3600,"met"=>+1*3600,"mewt"=>+1*3600,"swt"=>+1*3600,"set"=>+1*3600,"fwt"=>+1*3600,"eet"=>+2*3600,"ukr"=>+2*3600,"bt"=>+3*3600,"msk"=>+3*3600,"zp4"=>+4*3600,"zp5"=>+5*3600,"zp6"=>+6*3600,"wst"=>+8*3600,"hkt"=>+8*3600,"cct"=>+8*3600,"jst"=>+9*3600,"kst"=>+9*3600,"aest"=>+10*3600,"east"=>+10*3600,"gst"=>+10*3600,"nzt"=>+12*3600,"nzst"=>+12*3600,"idle"=>+12*3600,);%Zone=@Zone;%dstZone=@dstZone;%zoneOff=reverse(@Zone);%dstZoneOff=reverse(@dstZone)}sub tz_offset (;$$) {my ($zone,$time)=@_;return&tz_local_offset($time)unless($zone);$time=time()unless$time;my(@l)=localtime($time);my$dst=$l[8];$zone=lc$zone;if($zone =~ /^(([\-\+])\d\d?)(\d\d)$/){my$v=$2 .$3;return $1 * 3600 + $v * 60}elsif (exists$dstZone{$zone}&& ($dst ||!exists$Zone{$zone})){return$dstZone{$zone}}elsif(exists$Zone{$zone}){return$Zone{$zone}}undef}sub tz_name (;$$) {my ($off,$dst)=@_;$off=tz_offset()unless(defined$off);$dst=(localtime(time))[8]unless(defined$dst);if (exists$dstZoneOff{$off}&& ($dst ||!exists$zoneOff{$off})){return$dstZoneOff{$off}}elsif (exists$zoneOff{$off}){return$zoneOff{$off}}sprintf("%+05d",int($off / 60)* 100 + $off % 60)}1;
+TIME_ZONE
+
+s/^  //mg for values %fatpacked;
+
+my $class = 'FatPacked::'.(0+\%fatpacked);
+no strict 'refs';
+*{"${class}::files"} = sub { keys %{$_[0]} };
+
+if ($] < 5.008) {
+  *{"${class}::INC"} = sub {
+     if (my $fat = $_[0]{$_[1]}) {
+       return sub {
+         return 0 unless length $fat;
+         $fat =~ s/^([^\n]*\n?)//;
+         $_ = $1;
+         return 1;
+       };
+     }
+     return;
+  };
+}
+
+else {
+  *{"${class}::INC"} = sub {
+    if (my $fat = $_[0]{$_[1]}) {
+      open my $fh, '<', \$fat
+        or die "FatPacker error loading $_[1] (could be a perl installation issue?)";
+      return $fh;
+    }
+    return;
+  };
+}
+
+unshift @INC, bless \%fatpacked, $class;
+  } # END OF FATPACK CODE
 

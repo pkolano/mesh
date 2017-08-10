@@ -31,7 +31,6 @@ CHANGES
       contain the name of an authorized directory in agent
 
 * Mesh 1.5 (01/05/15)
-
     - Added support for IPv6 in MESH_MP_IPS handling
     - Added global mesh.conf in place of hardcoding via sed during build
     - Moved localhost, maphost, mps, and musers config into global mesh.conf
@@ -39,3 +38,13 @@ CHANGES
     - Changed location of mesh-getkey-hook to $PREFIX/sbin
     - Changed location of resource mapkey to /etc/mesh/mapkeys/local
     - Fixed build when libc/libpthread in /lib/x86_64-linux-gnu
+
+* Mesh 1.6 (08/10/17)
+    - Added module dependencies via App::FatPacker so can run with stock perl
+    - Added configuration information for systemd-based systems
+    - Added ability to specify where transient items stored for FHS-compliance
+    - Changed stats output to use Text::FormatTable instead of Text::Table
+    - Changed client with latest Shift updates
+    - Changed internal location of embedded bypass library
+    - Removed now unnecessary module checks from configure
+    - Removed now unnecessary distribution targets from Makefile

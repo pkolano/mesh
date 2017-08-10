@@ -9,6 +9,7 @@ Getopt::Long::Configure(qw(bundling no_ignore_case require_order));
 my %opts = (
     group => "mesh",
     prefix => "/usr/local",
+    vardir => "/var/lib/mesh",
 );
 $opts{help} = 1 if (scalar(@ARGV) == 0);
 exit 1 if !GetOptions(\%opts, qw(
@@ -28,6 +29,7 @@ if ($opts{help}) {
     print "Configuration:\n";
     print "  --help             display this help and exit\n";
     print "  --prefix=DIR       Mesh installation directory [$opts{prefix}]\n";
+    print "  --vardir=DIR       Mesh transient data directory [$opts{vardir}]\n";
     print "\n";
     print "  For an MP install:\n";
     print "    --type=mp        prepare installation for designated MP host\n";
@@ -63,6 +65,8 @@ open(OUT, ">etc/mesh.conf");
 while (<IN>) {
     if ($opts{prefix} ne '/usr/local' && /prefix_dir/) {
         s/.*/prefix_dir $opts{prefix}/;
+    if ($opts{vardir} ne '/var/lib/mesh' && /var_dir/) {
+        s/.*/var_dir $opts{vardir}/;
     } elsif ($opts{group} ne 'mesh' && /mesh_group/) {
         s/.*/mesh_group $opts{group}/;
     } elsif (/self_type/) {
@@ -83,39 +87,6 @@ while (my ($key, $val) = each %opts) {
 }
 
 my $error = 0;
-if ($opts{type} =~ /mp|map|mash/) {
-    my @mods = qw(Tie::IxHash XML::Simple);
-    if ($opts{type} ne "mash") {
-        push(@mods, qw(Date::Parse Net::Netmask Text::Table));
-    }
-    foreach my $mod (@mods) {
-        print "checking for $mod...";
-        if (!system("perl -M$mod -e '1' 2>/dev/null")) {
-            print "yes\n";
-        } else {
-            print "no\n";
-            print "*** ERROR: Can't find $mod\n";
-            $error = 1;
-        }
-    }
-}
-
-# must use File::BSDGlob in older versions without File::Glob
-print "checking for File::Glob...";
-if (!system("perl -MFile::Glob -e '1' 2>/dev/null")) {
-        print "yes\n";
-} else {
-    print "no\n";
-    print "checking for File::BSDGlob...";
-    if (!system("perl -MFile::BSDGlob -e '1' 2>/dev/null")) {
-        print "yes\n";
-    } else {
-        print "no\n";
-        print "*** ERROR: File::Glob or File::BSDGlob required\n";
-        $error = 1;
-    }
-}
-
 if ($opts{type} ne 'mash') {
     $ENV{PREFIX} = $opts{prefix};
     $error = 1 if (system("cd bypass_src; ./configure"));
