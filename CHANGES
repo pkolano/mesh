@@ -46,5 +46,6 @@ CHANGES
     - Changed stats output to use Text::FormatTable instead of Text::Table
     - Changed client with latest Shift updates
     - Changed internal location of embedded bypass library
+    - Changed XML parsing from XML::Simple to more easily embedded XML::TreePP
     - Removed now unnecessary module checks from configure
     - Removed now unnecessary distribution targets from Makefile
