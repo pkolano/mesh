@@ -580,6 +580,20 @@ int link(const char *oldpath, const char *newpath) agent_action {{
     return link(oldpath, newpath);
 }};
 
+int lutimes(const char *filename, const struct timeval *tvp) agent_action {{
+    if (!mesh_init) agent_init();
+    if (mesh_lock && (match((char *) filename, TYPE_RC) ||
+            match((char *) filename, TYPE_KEY) ||
+            !match((char *) filename, TYPE_USER))) {
+        // disallow changes to access and modification times of inodes
+        // associated with specific rc files, public key files,
+        // or files in non-permitted directories
+        errno = EACCES;
+        return -1;
+    }
+    return lutimes(filename, tvp);
+}};
+
 int mkdir(const char *pathname, mode_t mode) agent_action {{
     if (!mesh_init) agent_init();
     if (mesh_lock && (match((char *) pathname, TYPE_RC) ||
@@ -891,9 +905,9 @@ int utimes(const char *filename, const struct timeval *tvp) agent_action {{
     return utimes(filename, tvp);
 }};
 
+/* this is not being intercepted properly (for unknown reason) and breaks caller
 int utimensat(int dirfd, const char *pathname,
         const struct timespec *times, int flags) agent_action {{
-/*
     if (!mesh_init) agent_init();
     if (mesh_lock && (matchat(dirfd, (char *) pathname, TYPE_RC) ||
             matchat(dirfd, (char *) pathname, TYPE_KEY) ||
@@ -905,8 +919,8 @@ int utimensat(int dirfd, const char *pathname,
         return -1;
     }
     return utimensat(dirfd, pathname, times, flags);
-*/
 }};
+*/
 
 int __xmknod(int ver, const char *pathname, mode_t mode, dev_t *dev)
         agent_action {{

@@ -65,7 +65,7 @@ open(OUT, ">etc/mesh.conf");
 while (<IN>) {
     if ($opts{prefix} ne '/usr/local' && /prefix_dir/) {
         s/.*/prefix_dir $opts{prefix}/;
-    if ($opts{vardir} ne '/var/lib/mesh' && /var_dir/) {
+    } elsif ($opts{vardir} ne '/var/lib/mesh' && /var_dir/) {
         s/.*/var_dir $opts{vardir}/;
     } elsif ($opts{group} ne 'mesh' && /mesh_group/) {
         s/.*/mesh_group $opts{group}/;

@@ -64,6 +64,11 @@ intended for grid-like operations, organizations without an interest in
 grid computing can still deploy some or all of Mesh to take advantage of
 the additional security features it adds to stock SSH installations.
 
+Mesh is in active production at the NASA Advanced Supercomputing
+Facility (https://www.nas.nasa.gov/hecc/support/kb/entry/145) and has
+handled over 112M remote commands (as of May 2018) since stats started
+being collected in March 2009.
+
 For full details of the Mesh architecture, see
 https://pkolano.github.io/papers/sacmat07.pdf.  Note that the
 implementation of single sign-on across organizations has changed to

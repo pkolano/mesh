@@ -42,7 +42,7 @@ use strict;
 use File::Temp;
 use Getopt::Long qw(:config bundling no_ignore_case require_order);
 
-our $VERSION = 0.18;
+our $VERSION = 0.19;
 
 # default configuration
 my %conf = (
@@ -150,7 +150,8 @@ if (scalar(@ARGV) == 0) {
 }
 
 # untaint kill key fingerprint
-if ($kill_print =~ /(\w\w(:\w\w)+)/) {
+# fingerprint is either sha256 in base64 or md5 in hex pairs
+if ($kill_print =~ /^([a-zA-Z0-9+\/:]+)$/) {
     $kill_print = $1;
 } else {
     die "Error reading key fingerprint\n";
@@ -169,9 +170,11 @@ if (open(KEY, "<$pubkey")) {
             close $tmp;
             # extract fingerprint from key file
             my $print = qx{ssh-keygen -l -f $tmp 2>/dev/null};
+            my $print_md5 = qx{ssh-keygen -E md5 -l -f $tmp 2>/dev/null};
             # fingerprint is everything between first and second space
             $print =~ s/^\S+\s+|\s+.*$//g;
-            if ($print eq $kill_print) {
+            $print_md5 =~ s/^\S+\s+|\s+.*$//g;
+            if ($print eq $kill_print || $print_md5 eq $kill_print) {
                 $found = 1;
             } else {
                 print TMPKEY $key;

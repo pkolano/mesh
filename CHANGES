@@ -49,3 +49,9 @@ CHANGES
     - Changed XML parsing from XML::Simple to more easily embedded XML::TreePP
     - Removed now unnecessary module checks from configure
     - Removed now unnecessary distribution targets from Makefile
+
+* Mesh 1.7 (05/03/18)
+    - Added support for SHA256 key fingerprints
+    - Added interception of lutimes() to agent
+    - Fixed inadvertent mangling of quoted and escaped strings in commands
+    - Fixed broken configure script

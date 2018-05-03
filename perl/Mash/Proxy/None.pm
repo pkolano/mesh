@@ -46,7 +46,7 @@ use File::Glob qw(:glob);
 use Mash::Proxy;
 
 our @ISA = qw(Mash::Proxy);
-our $VERSION = 0.19;
+our $VERSION = 0.20;
 
 # initialize new null proxy instance
 sub new {
@@ -72,9 +72,11 @@ sub parse {
 
     # expand globbed pathnames
     @ARGV = ();
-    foreach (@argv_save) {
-        foreach (bsd_glob($_,
-                GLOB_BRACE | GLOB_NOCHECK | GLOB_QUOTE | GLOB_TILDE)) {
+    foreach my $arg (@argv_save) {
+        my @globs = bsd_glob($arg, GLOB_BRACE | GLOB_QUOTE | GLOB_TILDE);
+        # if no files found, use arg as originally given
+        @globs = ($arg) if (!scalar(@globs));
+        foreach (@globs) {
             push(@ARGV, $1) if (/([[:print:]]+)/);
         }
     }
