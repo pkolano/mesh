@@ -669,15 +669,17 @@ what conditions.
             containing the SSH client, a "port" element that specifies
             the SSH port to be used on the remote host, and a "commands"
             element that specifies which commands may execute on the
-            remote host.  Two optional elements "forward_agent" and
-            "forward_x11" can be specified to force forwarding of the
-            SSH agent and X11, respectively.  These options are disabled
-            by default.
+            remote host.  The optional elements "forward_agent",
+            "forward_x11", and "login" can be specified to force
+            forwarding of the SSH agent, force forwarding of X11,
+            and/or disable SSH batch mode, respectively.  These
+            options are disabled by default.
 
                 <ssh>
                     <directory>/base/dir/of/ssh/client</directory>
                     <forward_agent/>
                     <forward_x11/>
+                    <login/>
                     <port>22</port>
                     <commands>
                         <!-- command definitions -->

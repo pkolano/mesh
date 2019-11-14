@@ -55,3 +55,8 @@ CHANGES
     - Added interception of lutimes() to agent
     - Fixed inadvertent mangling of quoted and escaped strings in commands
     - Fixed broken configure script
+
+* Mesh 1.8 (11/13/19)
+    - Added documentation for ssh proxy "login" element
+    - Fixed denials by ssh proxy when forward_agent/x11 or login specified
+    - Removed mesh-getkey from all but MP in Makefile

@@ -48,7 +48,7 @@ use Text::ParseWords;
 use Mash::Proxy;
 
 our @ISA = qw(Mash::Proxy);
-our $VERSION = 0.40;
+our $VERSION = 0.41;
 
 # initialize new ssh proxy instance
 sub new {
@@ -70,15 +70,15 @@ sub new {
     }
     delete $self->{conf}->{port};
 
-    if (defined $self->{conf}->{forward_agent}) {
+    if (exists $self->{conf}->{forward_agent}) {
         $self->{forward_agent} = 1;
         delete $self->{conf}->{forward_agent};
     }
-    if (defined $self->{conf}->{forward_x11}) {
+    if (exists $self->{conf}->{forward_x11}) {
         $self->{forward_x11} = 1;
         delete $self->{conf}->{forward_x11};
     }
-    if (defined $self->{conf}->{login}) {
+    if (exists $self->{conf}->{login}) {
         $self->{login} = 1;
         delete $self->{conf}->{login};
     }

@@ -19,7 +19,7 @@ distclean: clean
 
 MP_BIN = mc mesh-getmp mesh-keygen mesh-keykill mesh-keytime mesh-setmp \
          mesh-update
-MP_SBIN = mesh-logstats
+MP_SBIN = mesh-logstats mesh-getkey
 MAP_BIN = mesh-keygen mesh-keykill mesh-setmp
 MAP_SBIN = mesh-logstats
 MASH_LIB = Command.pm Policy.pm Proxy.pm Proxy/None.pm Proxy/Ssh.pm \
@@ -90,7 +90,6 @@ mess_install: mia_install
 	test -f /etc/mesh/meshrc || install -g root -m 0644 -o root etc/meshrc.resource /etc/mesh/meshrc
 
 mia_install:
-	cd perl; install -g root -m 0755 -o root mesh-getkey $(PREFIX)sbin
 	cd perl; install -g root -m 0755 -o root mesh-getkey-hook $(PREFIX)sbin
 	cd bypass; make install
 
